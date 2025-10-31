@@ -60,7 +60,6 @@ function secToAss(tSec) {
 
 // --- HELPER FUNCTIONS ---
 
-// NOTE: We no longer pass 'alpha' here, as we control opacity manually using tags.
 function cssToAssColor(hex) {
   if (hex === 'white') hex = '#FFFFFF';
   if (hex === 'yellow') hex = '#FFFF00';
@@ -85,20 +84,18 @@ function cssToAssColor(hex) {
   }
 
   // ASS format is &H + Alpha (00) + Blue + Green + Red
-  // We set alpha to 00 here (Opaque) and override to FF (Transparent) in the text.
   return `&H00${b}${g}${r}`.toUpperCase();
 }
 
 
-// --- MODIFIED: framesToAss with Word-by-Word Fade-In (Alpha Transition) and Minimal Line Height ---
+// --- MODIFIED: framesToAss with NO Animation, Fixed Alignment, and Tighter Line Height (Negative Offset) ---
 function framesToAss(frames, styles, playResX = 1920, playResY = 1080) {
   
   // Style 1 (Top Line: Semibold/Default)
   const font1 = (styles && styles.fontTop) || 'Lexend';
   const size1 = (styles && styles.fontSizeTop) || 80;
-  // Primary/Secondary colors are set to the target OPAQUE color
   const color1Primary = cssToAssColor(styles && styles.colorTop); 
-  const color1Secondary = cssToAssColor(styles && styles.colorBottom); // Still use this for consistency/options
+  const color1Secondary = cssToAssColor(styles && styles.colorBottom);
   
   const weight1 = (styles && (styles.fontWeightTop === '700')) ? '1' : '0'; 
   const italic1 = (styles && styles.isItalicTop) ? '1' : '0'; 
@@ -112,11 +109,14 @@ function framesToAss(frames, styles, playResX = 1920, playResY = 1080) {
   const weight2 = (styles && (styles.fontWeightBottom === '700')) ? '1' : '0';
   const italic2 = (styles && styles.isItalicBottom) ? '1' : '0';
   
-  // --- Line Height & Padding Setup (REDUCED TO MINIMAL) ---
+  // --- Line Height & Padding Setup (FIXED) ---
   // Padding from the bottom edge
   const marginV_Line2 = (styles && styles.paddingBottom) || 200;
-  // Line 1 is positioned exactly size2 pixels above Line 2 (0px gap)
-  const marginV_Line1 = marginV_Line2 + size2 + 0; // <-- Reduced to 0px gap
+  
+  // To reduce line height, we introduce a negative offset (overlap).
+  // Line 1 is positioned above Line 2 with an effective 10px overlap to force tight spacing.
+  const LINE_OVERLAP = 10;
+  const marginV_Line1 = marginV_Line2 + size2 - LINE_OVERLAP; 
   
   // Clean drop shadow settings (no outline)
   const shadowColor = '&H80000000'; // 50% opaque black shadow color
@@ -138,50 +138,9 @@ Style: STYLE2,${font2},${size2},${color2Primary},${color2Secondary},&H00000000,$
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
   
-  // Function to generate word-by-word animated text using alpha transition (\t)
-  const generateAnimatedText = (lineText, startMs, endMs) => {
-    if (!lineText || lineText.trim() === '') return '';
-
-    const text = lineText.trim().split(/\s+/);
-    const totalDurationMs = endMs - startMs;
-    const wordCount = text.length;
-    
-    // Calculate average duration per word (in milliseconds)
-    const averageDurationMs = totalDurationMs / wordCount;
-    
-    // Convert average duration to ASS milliseconds. We want the fade to be very fast (e.g., 50ms)
-    // but the word appearance is timed by the cumulative delay.
-    const fadeDurationMs = 50; 
-    let cumulativeDelayMs = 0;
-    
-    let finalAssText = '';
-    
-    // Start the entire text fully transparent (&HFF)
-    finalAssText += '{\\a1\\1a&HFF}'; 
-    
-    for (let i = 0; i < wordCount; i++) {
-      const word = text[i];
-      
-      // Calculate the start time for the word relative to the segment start (in ms)
-      const wordStartDelayMs = Math.round(cumulativeDelayMs);
-      
-      // The word should remain transparent for the calculated delay, then fade in over 50ms.
-      // {\t(t1, t2, \alpha_target, \alpha_start)}
-      // t1: start time (ms) relative to segment start
-      // t2: end time (ms) relative to segment start (t1 + fadeDurationMs)
-      // \alpha_target: 00 (Opaque)
-      // \alpha_start: FF (Transparent)
-      const t1 = wordStartDelayMs;
-      const t2 = wordStartDelayMs + fadeDurationMs;
-      
-      // Apply the transformation tag to the word and space
-      finalAssText += `{\\t(${t1}, ${t2}, \\1a&H00)}${word}${i < wordCount - 1 ? ' ' : ''}`;
-      
-      // Update cumulative delay for the next word
-      cumulativeDelayMs += averageDurationMs;
-    }
-    
-    return finalAssText;
+  // Function to return plain text (NO ANIMATION)
+  const getPlainText = (lineText) => {
+    return lineText ? lineText.trim() : '';
   };
   
   const events = frames.flatMap(f => {
@@ -192,15 +151,17 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     
     const lines = [];
     
-    // Line 1: Calculated word-by-word fade animation (alpha transition)
+    // Line 1: Plain text
     if (f.line1 && f.line1.trim() !== '') {
-      const text1 = generateAnimatedText(f.line1, f.start, f.end);
+      const text1 = getPlainText(f.line1);
+      // Removed animation tags, ensuring stability
       lines.push(`Dialogue: 0,${startAss},${endAss},STYLE1,,0,0,0,,${text1}`);
     }
     
-    // Line 2: Calculated word-by-word fade animation (alpha transition)
+    // Line 2: Plain text
     if (f.line2 && f.line2.trim() !== '') {
-      const text2 = generateAnimatedText(f.line2, f.start, f.end);
+      const text2 = getPlainText(f.line2);
+      // Removed animation tags, ensuring stability
       lines.push(`Dialogue: 0,${startAss},${endAss},STYLE2,,0,0,0,,${text2}`);
     }
     
@@ -284,7 +245,7 @@ app.post('/render', async (req, res) => {
     let filterComplex;
 
     const WATERMARK_TEXT = "AiVideoCaptioner";
-    const LOGO_SIZE = 36; // <-- Smaller size for top-right watermark
+    const LOGO_SIZE = 24; // <-- NEW: Reduced logo size
     const PADDING = 32; // 32px padding for watermark
 
     // 4a. Watermark setup: Logo or Text
@@ -312,7 +273,7 @@ app.post('/render', async (req, res) => {
           `drawtext=` +
           `fontfile='Lexend-Regular.ttf':` + 
           `text='${WATERMARK_TEXT}':` +
-          `fontsize=24:` + // <-- Smaller size for top-right watermark
+          `fontsize=24:` + // <-- Watermark text size
           `fontcolor=white@0.7:` +
           // Positioning TOP RIGHT (y=PADDING)
           `x=main_w-tw-${PADDING}:` + 
