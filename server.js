@@ -31,7 +31,6 @@ function runFFmpeg(args) {
   });
 }
 
-// replace uploadToGCS with this
 async function uploadToGCS(localPath, destName) {
   if (!BUCKET) throw new Error('BUCKET_NAME not set in env');
   const bucket = storage.bucket(BUCKET);
@@ -59,27 +58,154 @@ function secToAss(tSec) {
   return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(cs).padStart(2,'0')}`;
 }
 
+// --- NEW HELPER FUNCTIONS ---
+
+// NEW: Recursive function to find the first matching font file for DRAWTEXT
+// drawtext filter needs a FULL file path, unlike the 'ass' filter
+function findFontFile(startDir, fontName) {
+  if (!fsSync.existsSync(startDir) || !fontName) {
+    return null;
+  }
+
+  const files = fsSync.readdirSync(startDir, { withFileTypes: true });
+  for (const file of files) {
+    const fullPath = path.join(startDir, file.name);
+    if (file.isDirectory()) {
+      const found = findFontFile(fullPath, fontName);
+      if (found) return found;
+    } else if (file.isFile()) {
+      const ext = path.extname(file.name).toLowerCase();
+      if (ext === '.ttf' || ext === '.otf') {
+        // Check if filename (without extension) matches
+        const baseName = path.basename(file.name, ext);
+        if (baseName.toLowerCase().replace(/[\s-_]/g, '').includes(fontName.toLowerCase().replace(/[\s-_]/g, ''))) {
+          return fullPath;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+// NEW: Fallback function to find *any* font file
+function findFirstFontFile(startDir) {
+  if (!fsSync.existsSync(startDir)) {
+    return null;
+  }
+  const files = fsSync.readdirSync(startDir, { withFileTypes: true });
+  for (const file of files) {
+    const fullPath = path.join(startDir, file.name);
+    if (file.isDirectory()) {
+      const found = findFirstFontFile(fullPath);
+      if (found) return found;
+    } else if (file.isFile()) {
+      const ext = path.extname(file.name).toLowerCase();
+      if (ext === '.ttf' || ext === '.otf') {
+        return fullPath;
+      }
+    }
+  }
+  return null;
+}
+
+// NEW: Converts CSS hex color (#RRGGBB) to ASS color (&HAABBGGRR)
+function cssToAssColor(hex, alpha = '00') {
+  // Handle CSS color names from your Bubble preview
+  if (hex === 'white') hex = '#FFFFFF';
+  if (hex === 'yellow') hex = '#FFFF00';
+  if (hex === 'black') hex = '#000000';
+
+  if (!hex || typeof hex !== 'string' || !hex.startsWith('#')) {
+    return '&H00FFFFFF'; // Default to Opaque White
+  }
+  
+  let r, g, b;
+  
+  if (hex.length === 7) { // #RRGGBB
+     r = hex.substring(1, 3);
+     g = hex.substring(3, 5);
+     b = hex.substring(5, 7);
+  } else if (hex.length === 4) { // #RGB
+     r = hex.substring(1, 2).repeat(2);
+     g = hex.substring(2, 3).repeat(2);
+     b = hex.substring(3, 4).repeat(2);
+  } else {
+    return '&H00FFFFFF'; // Default on invalid length
+  }
+
+  // ASS format is &H + Alpha + Blue + Green + Red
+  return `&H${alpha}${b}${g}${r}`.toUpperCase();
+}
+
+
+// --- REPLACED framesToAss FUNCTION ---
+// This now generates two styles and separate events for line1 and line2
 function framesToAss(frames, styles, playResX = 1920, playResY = 1080) {
-  const topFont = (styles && (styles.fontTop || styles.font)) || 'Lexend';
-  const fontSize = (styles && styles.fontSizeTop) || 56;
+  
+  // Style 1 (Top Line) - from your Bubble JS
+  const font1 = (styles && styles.fontTop) || 'Lexend';
+  const size1 = (styles && styles.fontSizeTop) || 48;
+  const color1 = cssToAssColor(styles && styles.colorTop);
+  // ASS bold: 1=true, 0=false.
+  const weight1 = (styles && (styles.fontWeightTop === 'bold' || styles.fontWeightTop === '700')) ? '1' : '0';
+
+  // Style 2 (Bottom Line) - from your Bubble JS
+  const font2 = (styles && styles.fontBottom) || 'Lexend';
+  const size2 = (styles && styles.fontSizeBottom) || 48;
+  const color2 = cssToAssColor(styles && styles.colorBottom);
+  const weight2 = (styles && (styles.fontWeightBottom === 'bold' || styles.fontWeightBottom === '700')) ? '1' : '0';
+  
+  // Get vertical margin from Bubble CSS (padding-bottom: 100px)
+  // This is the margin for the *bottom* of the caption block.
+  // We'll use alignment 2 (BottomCenter).
+  
+  // Margin for Line 2 (the bottom-most line)
+  const marginV_Line2 = (styles && styles.paddingBottom) || 100;
+  
+  // Margin for Line 1: It's Line 2's margin + Line 2's *font size* + a small gap
+  const marginV_Line1 = marginV_Line2 + size2 + 10; // 10px gap
+  
   const header = `[Script Info]
 ScriptType: v4.00+
 PlayResX: ${playResX}
 PlayResY: ${playResY}
+WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: CAPTION,${topFont},${fontSize},&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,3,0,2,10,10,70,1
+Style: STYLE1,${font1},${size1},${color1},&H000000FF,&H00000000,&H9A000000,${weight1},0,0,0,100,100,0,0,1,2.5,0.5,2,20,20,${marginV_Line1},1
+Style: STYLE2,${font2},${size2},${color2},&H000000FF,&H00000000,&H9A000000,${weight2},0,0,0,100,100,0,0,1,2.5,0.5,2,20,20,${marginV_Line2},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
-  const events = frames.map(f => {
+  
+  // Use .flatMap() to generate separate events for line1 and line2
+  const events = frames.flatMap(f => {
     const startSec = (f.start || 0) / 1000;
     const endSec = (f.end || (startSec + 2000)) / 1000;
-    const text = ((f.line1 ? f.line1 : '') + (f.line2 ? '\\N' + f.line2 : '')).replace(/\n/g, '\\N');
-    return `Dialogue: 0,${secToAss(startSec)},${secToAss(endSec)},CAPTION,,0,0,0,,${text}`;
+    const startAss = secToAss(startSec);
+    const endAss = secToAss(endSec);
+    
+    const lines = [];
+    
+    // Create Dialogue event for line 1 if it exists
+    if (f.line1 && f.line1.trim() !== '') {
+      const text1 = f.line1.replace(/\n/g, '\\N');
+      // Use MarginV=0 here to use the Style's default margin
+      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE1,,0,0,0,,${text1}`);
+    }
+    
+    // Create Dialogue event for line 2 if it exists
+    if (f.line2 && f.line2.trim() !== '') {
+      const text2 = f.line2.replace(/\n/g, '\\N');
+      // Use MarginV=0 here to use the Style's default margin
+      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE2,,0,0,0,,${text2}`);
+    }
+    
+    return lines;
   }).join('\n');
+  
   return header + events;
 }
 
@@ -130,6 +256,7 @@ app.post('/render', async (req, res) => {
     });
 
     // 2) Create ASS subtitles
+    // --- MODIFIED: Pass style object to framesToAss ---
     const ass = framesToAss(frames, style);
     await fs.writeFile(assPath, ass, 'utf8');
 
@@ -149,18 +276,20 @@ app.post('/render', async (req, res) => {
     const addWatermark = (plan_tier === 'free' || plan_tier === 'trial');
     const watermarkText = (style && style.watermarkText) ? style.watermarkText : 'YourBrand';
 
-    // find a font file if available under /app/fonts
+    // --- MODIFIED: Use new recursive font finders ---
     let fontFile = '';
     try {
-      const fontsExist = fsSync.existsSync('/app/fonts');
-      if (fontsExist) {
-        const fontFiles = fsSync.readdirSync('/app/fonts').filter(f => f.toLowerCase().endsWith('.ttf') || f.toLowerCase().endsWith('.otf'));
-        if (fontFiles.length) {
-          fontFile = `/app/fonts/${fontFiles[0]}`;
+        // Try to find a specific font, e.g., the one used for the top line
+        const preferredFontName = (style && style.fontTop) || 'Lexend';
+        fontFile = findFontFile('/app/fonts', preferredFontName);
+        
+        // If not found, find the *first* available font
+        if (!fontFile) {
+            fontFile = findFirstFontFile('/app/fonts');
         }
-      }
     } catch (e) {
-      fontFile = '';
+        console.warn("Error searching for fonts:", e.message);
+        fontFile = ''; // Will default to 'Sans'
     }
 
     // Build drawtext snippet
@@ -173,13 +302,16 @@ app.post('/render', async (req, res) => {
 
     // 5) Build ffmpeg filter_complex
     // We'll overlay gradient first, then drawtext (if any), then ass subtitles.
+    // --- MODIFIED: Added 'fontsdir=/app/fonts' to the 'ass' filter ---
     let ffArgs;
+    const assFilter = `ass=filename=${assPath}:fontsdir=/app/fonts`;
+
     if (addWatermark) {
       ffArgs = [
         '-y', '-i', inputPath,
         '-i', gradientPath,
         '-filter_complex',
-        `[0:v][1:v]overlay=0:main_h-overlay_h[tmpv];[tmpv]${drawtextSnippet}[tmp2];[tmp2]ass=${assPath}[v]`,
+        `[0:v][1:v]overlay=0:main_h-overlay_h[tmpv];[tmpv]${drawtextSnippet}[tmp2];[tmp2]${assFilter}[v]`,
         '-map', '[v]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath
       ];
     } else {
@@ -187,7 +319,7 @@ app.post('/render', async (req, res) => {
         '-y', '-i', inputPath,
         '-i', gradientPath,
         '-filter_complex',
-        `[0:v][1:v]overlay=0:main_h-overlay_h[tmpv];[tmpv]ass=${assPath}[v]`,
+        `[0:v][1:v]overlay=0:main_h-overlay_h[tmpv];[tmpv]${assFilter}[v]`,
         '-map', '[v]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath
       ];
     }
