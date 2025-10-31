@@ -31,15 +31,25 @@ function runFFmpeg(args) {
   });
 }
 
+// replace uploadToGCS with this
 async function uploadToGCS(localPath, destName) {
   if (!BUCKET) throw new Error('BUCKET_NAME not set in env');
   const bucket = storage.bucket(BUCKET);
   await bucket.upload(localPath, { destination: destName });
+
   const file = bucket.file(destName);
-  // For simplicity we make the file public — consider signed URLs in production
-  await file.makePublic();
-  return `https://storage.googleapis.com/${BUCKET}/${encodeURIComponent(destName)}`;
+
+  // Create a signed URL valid for 30 days (adjust expires as you like)
+  const expiresMs = Date.now() + 30 * 24 * 60 * 60 * 1000; // 30 days
+  const [signedUrl] = await file.getSignedUrl({
+    version: 'v4',
+    action: 'read',
+    expires: expiresMs
+  });
+
+  return signedUrl;
 }
+
 
 function secToAss(tSec) {
   const h = Math.floor(tSec / 3600);
