@@ -58,10 +58,8 @@ function secToAss(tSec) {
   return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(cs).padStart(2,'0')}`;
 }
 
-// --- NEW HELPER FUNCTIONS ---
+// --- HELPER FUNCTIONS ---
 
-// NEW: Recursive function to find the first matching font file for DRAWTEXT
-// drawtext filter needs a FULL file path, unlike the 'ass' filter
 function findFontFile(startDir, fontName) {
   if (!fsSync.existsSync(startDir) || !fontName) {
     return null;
@@ -76,7 +74,6 @@ function findFontFile(startDir, fontName) {
     } else if (file.isFile()) {
       const ext = path.extname(file.name).toLowerCase();
       if (ext === '.ttf' || ext === '.otf') {
-        // Check if filename (without extension) matches
         const baseName = path.basename(file.name, ext);
         if (baseName.toLowerCase().replace(/[\s-_]/g, '').includes(fontName.toLowerCase().replace(/[\s-_]/g, ''))) {
           return fullPath;
@@ -87,7 +84,6 @@ function findFontFile(startDir, fontName) {
   return null;
 }
 
-// NEW: Fallback function to find *any* font file
 function findFirstFontFile(startDir) {
   if (!fsSync.existsSync(startDir)) {
     return null;
@@ -108,9 +104,7 @@ function findFirstFontFile(startDir) {
   return null;
 }
 
-// NEW: Converts CSS hex color (#RRGGBB) to ASS color (&HAABBGGRR)
 function cssToAssColor(hex, alpha = '00') {
-  // Handle CSS color names from your Bubble preview
   if (hex === 'white') hex = '#FFFFFF';
   if (hex === 'yellow') hex = '#FFFF00';
   if (hex === 'black') hex = '#000000';
@@ -139,31 +133,34 @@ function cssToAssColor(hex, alpha = '00') {
 
 
 // --- REPLACED framesToAss FUNCTION ---
-// This now generates two styles and separate events for line1 and line2
+// Re-styled to match the Bubble preview (large font, drop shadow, no outline)
 function framesToAss(frames, styles, playResX = 1920, playResY = 1080) {
   
   // Style 1 (Top Line) - from your Bubble JS
+  // --- MODIFIED: Increased font size to match target image ---
   const font1 = (styles && styles.fontTop) || 'Lexend';
-  const size1 = (styles && styles.fontSizeTop) || 48;
+  const size1 = (styles && styles.fontSizeTop) || 80; // Increased from 48/56
   const color1 = cssToAssColor(styles && styles.colorTop);
-  // ASS bold: 1=true, 0=false.
   const weight1 = (styles && (styles.fontWeightTop === 'bold' || styles.fontWeightTop === '700')) ? '1' : '0';
 
   // Style 2 (Bottom Line) - from your Bubble JS
+  // --- MODIFIED: Increased font size to match target image ---
   const font2 = (styles && styles.fontBottom) || 'Lexend';
-  const size2 = (styles && styles.fontSizeBottom) || 48;
+  const size2 = (styles && styles.fontSizeBottom) || 80; // Increased from 48/56
   const color2 = cssToAssColor(styles && styles.colorBottom);
   const weight2 = (styles && (styles.fontWeightBottom === 'bold' || styles.fontWeightBottom === '700')) ? '1' : '0';
   
-  // Get vertical margin from Bubble CSS (padding-bottom: 100px)
-  // This is the margin for the *bottom* of the caption block.
-  // We'll use alignment 2 (BottomCenter).
-  
-  // Margin for Line 2 (the bottom-most line)
+  // --- MODIFIED: Using 100px default to match Bubble CSS ---
   const marginV_Line2 = (styles && styles.paddingBottom) || 100;
   
   // Margin for Line 1: It's Line 2's margin + Line 2's *font size* + a small gap
-  const marginV_Line1 = marginV_Line2 + size2 + 10; // 10px gap
+  const marginV_Line1 = marginV_Line2 + size2 + 15; // 15px gap
+  
+  // --- MODIFIED: ShadowColor, Outline=0, Shadow=2 ---
+  // This replicates the `text-shadow: 1px 1px 2px #000000;` from your CSS
+  const shadowColor = '&H80000000'; // 50% opaque black
+  const outline = 0; // No outline
+  const shadow = 2; // Shadow distance
   
   const header = `[Script Info]
 ScriptType: v4.00+
@@ -173,14 +170,13 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: STYLE1,${font1},${size1},${color1},&H000000FF,&H00000000,&H9A000000,${weight1},0,0,0,100,100,0,0,1,2.5,0.5,2,20,20,${marginV_Line1},1
-Style: STYLE2,${font2},${size2},${color2},&H000000FF,&H00000000,&H9A000000,${weight2},0,0,0,100,100,0,0,1,2.5,0.5,2,20,20,${marginV_Line2},1
+Style: STYLE1,${font1},${size1},${color1},&H000000FF,&H00000000,${shadowColor},${weight1},0,0,0,100,100,0,0,1,${outline},${shadow},2,20,20,${marginV_Line1},1
+Style: STYLE2,${font2},${size2},${color2},&H000000FF,&H00000000,${shadowColor},${weight2},0,0,0,100,100,0,0,1,${outline},${shadow},2,20,20,${marginV_Line2},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
   
-  // Use .flatMap() to generate separate events for line1 and line2
   const events = frames.flatMap(f => {
     const startSec = (f.start || 0) / 1000;
     const endSec = (f.end || (startSec + 2000)) / 1000;
@@ -189,17 +185,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     
     const lines = [];
     
-    // Create Dialogue event for line 1 if it exists
     if (f.line1 && f.line1.trim() !== '') {
       const text1 = f.line1.replace(/\n/g, '\\N');
-      // Use MarginV=0 here to use the Style's default margin
       lines.push(`Dialogue: 0,${startAss},${endAss},STYLE1,,0,0,0,,${text1}`);
     }
     
-    // Create Dialogue event for line 2 if it exists
     if (f.line2 && f.line2.trim() !== '') {
       const text2 = f.line2.replace(/\n/g, '\\N');
-      // Use MarginV=0 here to use the Style's default margin
       lines.push(`Dialogue: 0,${startAss},${endAss},STYLE2,,0,0,0,,${text2}`);
     }
     
@@ -232,7 +224,6 @@ app.post('/render', async (req, res) => {
       return res.status(401).json({ status: 'error', error: 'unauthorized' });
     }
 
-    // Extract inputs
     const { job_id, reservation_id, video_url, frames, style, callback_url, plan_tier } = req.body || {};
 
     if (!video_url || !frames) {
@@ -243,7 +234,7 @@ app.post('/render', async (req, res) => {
     const tmpDir = '/tmp';
     const inputPath = path.join(tmpDir, `in-${job_id}.mp4`);
     const assPath = path.join(tmpDir, `subs-${job_id}.ass`);
-    const gradientPath = path.join(tmpDir, `gradient-${job_id}.png`);
+    // --- REMOVED GRADIENT PATH ---
     const outPath = path.join(tmpDir, `out-${job_id}.mp4`);
 
     // 1) Download the input video
@@ -256,34 +247,20 @@ app.post('/render', async (req, res) => {
     });
 
     // 2) Create ASS subtitles
-    // --- MODIFIED: Pass style object to framesToAss ---
     const ass = framesToAss(frames, style);
     await fs.writeFile(assPath, ass, 'utf8');
 
-    // 3) Determine resolution and generate gradient
-    const { width, height } = await getVideoResolution(inputPath);
-    const gradH = Math.max(Math.round(height / 4), 80);
-
-    try {
-      // try gradient with ImageMagick
-      runCommandSync(`convert -size ${width}x${gradH} gradient:"#242229-#00000000" ${gradientPath}`);
-    } catch (e) {
-      // fallback to translucent rectangle
-      runCommandSync(`convert -size ${width}x${gradH} canvas:none -fill "rgba(36,34,41,0.85)" -draw "rectangle 0,0 ${width},${gradH}" ${gradientPath}`);
-    }
+    // 3) --- REMOVED GRADIENT GENERATION ---
 
     // 4) Decide watermark via drawtext (ffmpeg)
     const addWatermark = (plan_tier === 'free' || plan_tier === 'trial');
     const watermarkText = (style && style.watermarkText) ? style.watermarkText : 'YourBrand';
 
-    // --- MODIFIED: Use new recursive font finders ---
     let fontFile = '';
     try {
-        // Try to find a specific font, e.g., the one used for the top line
         const preferredFontName = (style && style.fontTop) || 'Lexend';
         fontFile = findFontFile('/app/fonts', preferredFontName);
         
-        // If not found, find the *first* available font
         if (!fontFile) {
             fontFile = findFirstFontFile('/app/fonts');
         }
@@ -292,8 +269,7 @@ app.post('/render', async (req, res) => {
         fontFile = ''; // Will default to 'Sans'
     }
 
-    // Build drawtext snippet
-    const escapedText = watermarkText.replace(/[:']/g, ""); // remove problematic chars for drawtext
+    const escapedText = watermarkText.replace(/[:']/g, ""); 
     const drawtextSnippet = addWatermark
       ? (fontFile
           ? `drawtext=fontfile='${fontFile}':text='${escapedText}':fontsize=28:fontcolor=white@0.7:x=main_w-tw-10:y=main_h-th-10`
@@ -301,25 +277,24 @@ app.post('/render', async (req, res) => {
       : '';
 
     // 5) Build ffmpeg filter_complex
-    // We'll overlay gradient first, then drawtext (if any), then ass subtitles.
-    // --- MODIFIED: Added 'fontsdir=/app/fonts' to the 'ass' filter ---
+    // --- MODIFIED: Simplified filter_complex, removed gradient overlay ---
     let ffArgs;
     const assFilter = `ass=filename=${assPath}:fontsdir=/app/fonts`;
 
     if (addWatermark) {
       ffArgs = [
         '-y', '-i', inputPath,
-        '-i', gradientPath,
+        // No gradient input
         '-filter_complex',
-        `[0:v][1:v]overlay=0:main_h-overlay_h[tmpv];[tmpv]${drawtextSnippet}[tmp2];[tmp2]${assFilter}[v]`,
+        `[0:v]${drawtextSnippet}[tmpv];[tmpv]${assFilter}[v]`, // Chain ass filter after drawtext
         '-map', '[v]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath
       ];
     } else {
       ffArgs = [
         '-y', '-i', inputPath,
-        '-i', gradientPath,
+        // No gradient input
         '-filter_complex',
-        `[0:v][1:v]overlay=0:main_h-overlay_h[tmpv];[tmpv]${assFilter}[v]`,
+        `[0:v]${assFilter}[v]`, // Just apply ass filter
         '-map', '[v]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath
       ];
     }
@@ -346,7 +321,7 @@ app.post('/render', async (req, res) => {
     if (callback_url) {
       try {
         await axios.post(callback_url, {
-          render_secret: RENDER_SECRET,
+          render__secret: RENDER_SECRET,
           reservation_id,
           job_id,
           status: 'success',
