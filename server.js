@@ -60,7 +60,8 @@ function secToAss(tSec) {
 
 // --- HELPER FUNCTIONS ---
 
-function cssToAssColor(hex, alpha = '00') {
+// NOTE: We no longer pass 'alpha' here, as we control opacity manually using tags.
+function cssToAssColor(hex) {
   if (hex === 'white') hex = '#FFFFFF';
   if (hex === 'yellow') hex = '#FFFF00';
   if (hex === 'black') hex = '#000000';
@@ -83,39 +84,43 @@ function cssToAssColor(hex, alpha = '00') {
     return '&H00FFFFFF'; // Default on invalid length
   }
 
-  // ASS format is &H + Alpha + Blue + Green + Red
-  return `&H${alpha}${b}${g}${r}`.toUpperCase();
+  // ASS format is &H + Alpha (00) + Blue + Green + Red
+  // We set alpha to 00 here (Opaque) and override to FF (Transparent) in the text.
+  return `&H00${b}${g}${r}`.toUpperCase();
 }
 
 
-// --- MODIFIED: framesToAss with Calculated Word Timing & Tighter Line Height ---
+// --- MODIFIED: framesToAss with Word-by-Word Fade-In (Alpha Transition) and Minimal Line Height ---
 function framesToAss(frames, styles, playResX = 1920, playResY = 1080) {
   
   // Style 1 (Top Line: Semibold/Default)
   const font1 = (styles && styles.fontTop) || 'Lexend';
   const size1 = (styles && styles.fontSizeTop) || 80;
-  const color1 = cssToAssColor(styles && styles.colorTop);
-  // Semibold is typically 600, so we default to non-bold (0) unless explicitly 700
+  // Primary/Secondary colors are set to the target OPAQUE color
+  const color1Primary = cssToAssColor(styles && styles.colorTop); 
+  const color1Secondary = cssToAssColor(styles && styles.colorBottom); // Still use this for consistency/options
+  
   const weight1 = (styles && (styles.fontWeightTop === '700')) ? '1' : '0'; 
   const italic1 = (styles && styles.isItalicTop) ? '1' : '0'; 
 
   // Style 2 (Bottom Line: Bold Italic 700)
   const font2 = (styles && styles.fontBottom) || 'Lexend';
   const size2 = (styles && styles.fontSizeBottom) || 80;
-  const color2 = cssToAssColor(styles && styles.colorBottom);
+  const color2Primary = cssToAssColor(styles && styles.colorBottom); 
+  const color2Secondary = cssToAssColor(styles && styles.colorTop);
+  
   const weight2 = (styles && (styles.fontWeightBottom === '700')) ? '1' : '0';
   const italic2 = (styles && styles.isItalicBottom) ? '1' : '0';
   
-  // --- Line Height & Padding Setup ---
+  // --- Line Height & Padding Setup (REDUCED TO MINIMAL) ---
   // Padding from the bottom edge
   const marginV_Line2 = (styles && styles.paddingBottom) || 200;
-  // Line 1 is positioned above Line 2 with a minimal vertical gap (size2 + 5)
-  // This reduces line height for a tighter look.
-  const marginV_Line1 = marginV_Line2 + size2 + 5; 
+  // Line 1 is positioned exactly size2 pixels above Line 2 (0px gap)
+  const marginV_Line1 = marginV_Line2 + size2 + 0; // <-- Reduced to 0px gap
   
   // Clean drop shadow settings (no outline)
   const shadowColor = '&H80000000'; // 50% opaque black shadow color
-  const outline = 0; // <-- REMOVED OUTLINE
+  const outline = 0; 
   const shadow = 2; // Shadow distance
   
   const header = `[Script Info]
@@ -126,14 +131,14 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: STYLE1,${font1},${size1},${color1},&H000000FF,&H00000000,${shadowColor},${weight1},${italic1},0,0,100,100,0,0,1,${outline},${shadow},2,20,20,${marginV_Line1},1
-Style: STYLE2,${font2},${size2},${color2},&H000000FF,&H00000000,${shadowColor},${weight2},${italic2},0,0,100,100,0,0,1,${outline},${shadow},2,20,20,${marginV_Line2},1
+Style: STYLE1,${font1},${size1},${color1Primary},${color1Secondary},&H00000000,${shadowColor},${weight1},${italic1},0,0,100,100,0,0,1,${outline},${shadow},2,20,20,${marginV_Line1},1
+Style: STYLE2,${font2},${size2},${color2Primary},${color2Secondary},&H00000000,${shadowColor},${weight2},${italic2},0,0,100,100,0,0,1,${outline},${shadow},2,20,20,${marginV_Line2},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
   
-  // Function to generate word-by-word animated text based on average time
+  // Function to generate word-by-word animated text using alpha transition (\t)
   const generateAnimatedText = (lineText, startMs, endMs) => {
     if (!lineText || lineText.trim() === '') return '';
 
@@ -144,21 +149,38 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     // Calculate average duration per word (in milliseconds)
     const averageDurationMs = totalDurationMs / wordCount;
     
-    // Convert average duration to ASS \k value (centi-seconds), minimum 1
-    // The \k value controls how quickly the word turns the PrimaryColour
-    const durationCs = Math.max(1, Math.round(averageDurationMs / 10)); 
+    // Convert average duration to ASS milliseconds. We want the fade to be very fast (e.g., 50ms)
+    // but the word appearance is timed by the cumulative delay.
+    const fadeDurationMs = 50; 
+    let cumulativeDelayMs = 0;
     
     let finalAssText = '';
+    
+    // Start the entire text fully transparent (&HFF)
+    finalAssText += '{\\a1\\1a&HFF}'; 
     
     for (let i = 0; i < wordCount; i++) {
       const word = text[i];
       
-      // Use \k for the duration of the visibility/typing effect in centiseconds. 
-      // The space is included in the \k duration for the current word.
-      finalAssText += `{\\k${durationCs}}${word}${i < wordCount - 1 ? ' ' : ''}`;
+      // Calculate the start time for the word relative to the segment start (in ms)
+      const wordStartDelayMs = Math.round(cumulativeDelayMs);
+      
+      // The word should remain transparent for the calculated delay, then fade in over 50ms.
+      // {\t(t1, t2, \alpha_target, \alpha_start)}
+      // t1: start time (ms) relative to segment start
+      // t2: end time (ms) relative to segment start (t1 + fadeDurationMs)
+      // \alpha_target: 00 (Opaque)
+      // \alpha_start: FF (Transparent)
+      const t1 = wordStartDelayMs;
+      const t2 = wordStartDelayMs + fadeDurationMs;
+      
+      // Apply the transformation tag to the word and space
+      finalAssText += `{\\t(${t1}, ${t2}, \\1a&H00)}${word}${i < wordCount - 1 ? ' ' : ''}`;
+      
+      // Update cumulative delay for the next word
+      cumulativeDelayMs += averageDurationMs;
     }
     
-    // The animation relies on the cumulative effect of \k across the line.
     return finalAssText;
   };
   
@@ -170,13 +192,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     
     const lines = [];
     
-    // Line 1: Calculated word-by-word animation
+    // Line 1: Calculated word-by-word fade animation (alpha transition)
     if (f.line1 && f.line1.trim() !== '') {
       const text1 = generateAnimatedText(f.line1, f.start, f.end);
       lines.push(`Dialogue: 0,${startAss},${endAss},STYLE1,,0,0,0,,${text1}`);
     }
     
-    // Line 2: Calculated word-by-word animation
+    // Line 2: Calculated word-by-word fade animation (alpha transition)
     if (f.line2 && f.line2.trim() !== '') {
       const text2 = generateAnimatedText(f.line2, f.start, f.end);
       lines.push(`Dialogue: 0,${startAss},${endAss},STYLE2,,0,0,0,,${text2}`);
