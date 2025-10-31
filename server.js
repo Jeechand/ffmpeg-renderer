@@ -60,50 +60,6 @@ function secToAss(tSec) {
 
 // --- HELPER FUNCTIONS ---
 
-function findFontFile(startDir, fontName) {
-  if (!fsSync.existsSync(startDir) || !fontName) {
-    return null;
-  }
-
-  const files = fsSync.readdirSync(startDir, { withFileTypes: true });
-  for (const file of files) {
-    const fullPath = path.join(startDir, file.name);
-    if (file.isDirectory()) {
-      const found = findFontFile(fullPath, fontName);
-      if (found) return found;
-    } else if (file.isFile()) {
-      const ext = path.extname(file.name).toLowerCase();
-      if (ext === '.ttf' || ext === '.otf') {
-        const baseName = path.basename(file.name, ext);
-        if (baseName.toLowerCase().replace(/[\s-_]/g, '').includes(fontName.toLowerCase().replace(/[\s-_]/g, ''))) {
-          return fullPath;
-        }
-      }
-    }
-  }
-  return null;
-}
-
-function findFirstFontFile(startDir) {
-  if (!fsSync.existsSync(startDir)) {
-    return null;
-  }
-  const files = fsSync.readdirSync(startDir, { withFileTypes: true });
-  for (const file of files) {
-    const fullPath = path.join(startDir, file.name);
-    if (file.isDirectory()) {
-      const found = findFirstFontFile(fullPath);
-      if (found) return found;
-    } else if (file.isFile()) {
-      const ext = path.extname(file.name).toLowerCase();
-      if (ext === '.ttf' || ext === '.otf') {
-        return fullPath;
-      }
-    }
-  }
-  return null;
-}
-
 function cssToAssColor(hex, alpha = '00') {
   if (hex === 'white') hex = '#FFFFFF';
   if (hex === 'yellow') hex = '#FFFF00';
@@ -132,30 +88,30 @@ function cssToAssColor(hex, alpha = '00') {
 }
 
 
-// --- MODIFIED: framesToAss with Simplified Animation and fixed styles ---
+// --- MODIFIED: framesToAss with Calculated Word Timing & Tighter Line Height ---
 function framesToAss(frames, styles, playResX = 1920, playResY = 1080) {
   
-  // Style 1 (Top Line: Semibold)
-  // We use fontTop (e.g., 'Lexend Semibold') and set weight1 to '0' (non-bold) 
-  // unless explicitly 700, letting the font file determine the weight.
+  // Style 1 (Top Line: Semibold/Default)
   const font1 = (styles && styles.fontTop) || 'Lexend';
   const size1 = (styles && styles.fontSizeTop) || 80;
   const color1 = cssToAssColor(styles && styles.colorTop);
-  // Semibold is typically 600, so we default to non-bold (0)
+  // Semibold is typically 600, so we default to non-bold (0) unless explicitly 700
   const weight1 = (styles && (styles.fontWeightTop === '700')) ? '1' : '0'; 
   const italic1 = (styles && styles.isItalicTop) ? '1' : '0'; 
 
   // Style 2 (Bottom Line: Bold Italic 700)
-  // Explicitly setting weight2='1' for Bold and italic2='1' for Italic
   const font2 = (styles && styles.fontBottom) || 'Lexend';
   const size2 = (styles && styles.fontSizeBottom) || 80;
   const color2 = cssToAssColor(styles && styles.colorBottom);
   const weight2 = (styles && (styles.fontWeightBottom === '700')) ? '1' : '0';
   const italic2 = (styles && styles.isItalicBottom) ? '1' : '0';
   
-  // --- UPDATED: Padding set to 200px ---
+  // --- Line Height & Padding Setup ---
+  // Padding from the bottom edge
   const marginV_Line2 = (styles && styles.paddingBottom) || 200;
-  const marginV_Line1 = marginV_Line2 + size2 + 15;
+  // Line 1 is positioned above Line 2 with a minimal vertical gap (size2 + 5)
+  // This reduces line height for a tighter look.
+  const marginV_Line1 = marginV_Line2 + size2 + 5; 
   
   // Clean drop shadow settings (no outline)
   const shadowColor = '&H80000000'; // 50% opaque black shadow color
@@ -177,6 +133,35 @@ Style: STYLE2,${font2},${size2},${color2},&H000000FF,&H00000000,${shadowColor},$
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
   
+  // Function to generate word-by-word animated text based on average time
+  const generateAnimatedText = (lineText, startMs, endMs) => {
+    if (!lineText || lineText.trim() === '') return '';
+
+    const text = lineText.trim().split(/\s+/);
+    const totalDurationMs = endMs - startMs;
+    const wordCount = text.length;
+    
+    // Calculate average duration per word (in milliseconds)
+    const averageDurationMs = totalDurationMs / wordCount;
+    
+    // Convert average duration to ASS \k value (centi-seconds), minimum 1
+    // The \k value controls how quickly the word turns the PrimaryColour
+    const durationCs = Math.max(1, Math.round(averageDurationMs / 10)); 
+    
+    let finalAssText = '';
+    
+    for (let i = 0; i < wordCount; i++) {
+      const word = text[i];
+      
+      // Use \k for the duration of the visibility/typing effect in centiseconds. 
+      // The space is included in the \k duration for the current word.
+      finalAssText += `{\\k${durationCs}}${word}${i < wordCount - 1 ? ' ' : ''}`;
+    }
+    
+    // The animation relies on the cumulative effect of \k across the line.
+    return finalAssText;
+  };
+  
   const events = frames.flatMap(f => {
     const startSec = (f.start || 0) / 1000;
     const endSec = (f.end || (startSec + 2000)) / 1000;
@@ -185,15 +170,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     
     const lines = [];
     
-    // Line 1: Static display for the whole duration
+    // Line 1: Calculated word-by-word animation
     if (f.line1 && f.line1.trim() !== '') {
-      const text1 = f.line1.replace(/\n/g, '\\N');
+      const text1 = generateAnimatedText(f.line1, f.start, f.end);
       lines.push(`Dialogue: 0,${startAss},${endAss},STYLE1,,0,0,0,,${text1}`);
     }
     
-    // Line 2: Static display for the whole duration
+    // Line 2: Calculated word-by-word animation
     if (f.line2 && f.line2.trim() !== '') {
-      const text2 = f.line2.replace(/\n/g, '\\N');
+      const text2 = generateAnimatedText(f.line2, f.start, f.end);
       lines.push(`Dialogue: 0,${startAss},${endAss},STYLE2,,0,0,0,,${text2}`);
     }
     
@@ -250,7 +235,6 @@ app.post('/render', async (req, res) => {
 
     // 2) Download logo if provided
     let logoInput = null;
-    let mainVideoInputIndex = '0:v'; // Standard video input index
 
     if (logo_url) {
         try {
@@ -262,7 +246,6 @@ app.post('/render', async (req, res) => {
                 logoWriter.on('error', reject);
             });
             logoInput = logoPath;
-            mainVideoInputIndex = '1:v'; // Video becomes input 1 when logo is input 0
         } catch (e) {
             console.error('Failed to download logo:', e.message);
             // Non-fatal: just continue without a logo
@@ -279,7 +262,7 @@ app.post('/render', async (req, res) => {
     let filterComplex;
 
     const WATERMARK_TEXT = "AiVideoCaptioner";
-    const LOGO_SIZE = 50; // Size for the logo image
+    const LOGO_SIZE = 36; // <-- Smaller size for top-right watermark
     const PADDING = 32; // 32px padding for watermark
 
     // 4a. Watermark setup: Logo or Text
@@ -287,7 +270,8 @@ app.post('/render', async (req, res) => {
         // Logo setup: scale logo and overlay it onto the main video
         filterComplex = 
             `[0:v]scale=w=${LOGO_SIZE}:h=${LOGO_SIZE}[logo];` + // Scale logo (Input 0)
-            `[1:v][logo]overlay=x=main_w-overlay_w-${PADDING}:y=main_h-overlay_h-${PADDING}[v_wm]`; // Overlay logo onto video (Input 1)
+            // Overlay logo onto video (Input 1), positioning TOP RIGHT (y=PADDING)
+            `[1:v][logo]overlay=x=main_w-overlay_w-${PADDING}:y=${PADDING}[v_wm]`; 
         
         // Final Chain: [v_wm] -> ASS -> [v]
         filterComplex += `;[v_wm]${assFilter}[v]`;
@@ -304,12 +288,13 @@ app.post('/render', async (req, res) => {
         // Text Watermark setup (No logo provided)
         const watermarkDrawText = 
           `drawtext=` +
-          `fontfile='Lexend-Regular.ttf':` + // Assumes Lexend-Regular is available
+          `fontfile='Lexend-Regular.ttf':` + 
           `text='${WATERMARK_TEXT}':` +
-          `fontsize=36:` +
+          `fontsize=24:` + // <-- Smaller size for top-right watermark
           `fontcolor=white@0.7:` +
-          `x=main_w-tw-${PADDING}:` +
-          `y=main_h-th-${PADDING}[v_wm]`;
+          // Positioning TOP RIGHT (y=PADDING)
+          `x=main_w-tw-${PADDING}:` + 
+          `y=${PADDING}[v_wm]`; 
 
         // Final Chain: [0:v] -> Watermark Drawtext -> ASS -> [v]
         filterComplex = `[0:v]${watermarkDrawText};[v_wm]${assFilter}[v]`;
