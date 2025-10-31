@@ -114,8 +114,8 @@ function framesToAss(frames, styles, playResX = 1920, playResY = 1080) {
   const marginV_Line2 = (styles && styles.paddingBottom) || 200;
   
   // To reduce line height, we introduce a negative offset (overlap).
-  // Line 1 is positioned above Line 2 with an effective 10px overlap to force tight spacing.
-  const LINE_OVERLAP = 10;
+  // Line 1 is positioned above Line 2 with an effective 5px overlap for safer tight spacing.
+  const LINE_OVERLAP = 5; // Reduced overlap for stability
   const marginV_Line1 = marginV_Line2 + size2 - LINE_OVERLAP; 
   
   // Clean drop shadow settings (no outline)
@@ -151,18 +151,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     
     const lines = [];
     
-    // Line 1: Plain text
+    // Line 1: Plain text (User expects this on TOP)
+    // FIX: Using STYLE2 (which has the LOW margin) to compensate for the reported visual swap bug.
     if (f.line1 && f.line1.trim() !== '') {
       const text1 = getPlainText(f.line1);
-      // Removed animation tags, ensuring stability
-      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE1,,0,0,0,,${text1}`);
+      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE2,,0,0,0,,${text1}`);
     }
     
-    // Line 2: Plain text
+    // Line 2: Plain text (User expects this on BOTTOM)
+    // FIX: Using STYLE1 (which has the HIGH margin) to compensate for the reported visual swap bug.
     if (f.line2 && f.line2.trim() !== '') {
       const text2 = getPlainText(f.line2);
-      // Removed animation tags, ensuring stability
-      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE2,,0,0,0,,${text2}`);
+      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE1,,0,0,0,,${text2}`);
     }
     
     return lines;
