@@ -88,10 +88,10 @@ function cssToAssColor(hex) {
 }
 
 
-// --- MODIFIED: framesToAss with NO Animation, Fixed Alignment, and Tighter Line Height (Negative Offset) ---
+// --- MODIFIED: framesToAss with NO Animation, Fixed Alignment, and Tighter Line Height (Forced Overlap) ---
 function framesToAss(frames, styles, playResX = 1920, playResY = 1080) {
   
-  // Style 1 (Top Line: Semibold/Default)
+  // Style 1 (Top Line)
   const font1 = (styles && styles.fontTop) || 'Lexend';
   const size1 = (styles && styles.fontSizeTop) || 80;
   const color1Primary = cssToAssColor(styles && styles.colorTop); 
@@ -100,7 +100,7 @@ function framesToAss(frames, styles, playResX = 1920, playResY = 1080) {
   const weight1 = (styles && (styles.fontWeightTop === '700')) ? '1' : '0'; 
   const italic1 = (styles && styles.isItalicTop) ? '1' : '0'; 
 
-  // Style 2 (Bottom Line: Bold Italic 700)
+  // Style 2 (Bottom Line)
   const font2 = (styles && styles.fontBottom) || 'Lexend';
   const size2 = (styles && styles.fontSizeBottom) || 80;
   const color2Primary = cssToAssColor(styles && styles.colorBottom); 
@@ -109,13 +109,13 @@ function framesToAss(frames, styles, playResX = 1920, playResY = 1080) {
   const weight2 = (styles && (styles.fontWeightBottom === '700')) ? '1' : '0';
   const italic2 = (styles && styles.isItalicBottom) ? '1' : '0';
   
-  // --- Line Height & Padding Setup (FIXED) ---
+  // --- Line Height & Padding Setup (FORCED OVERLAP) ---
   // Padding from the bottom edge
   const marginV_Line2 = (styles && styles.paddingBottom) || 200;
   
-  // To reduce line height, we introduce a negative offset (overlap).
-  // Line 1 is positioned above Line 2 with an effective 5px overlap for safer tight spacing.
-  const LINE_OVERLAP = 5; // Reduced overlap for stability
+  // FIX: Minimal negative offset (1px overlap) to achieve "line height 0" while minimizing rendering quirks.
+  const LINE_OVERLAP = 1; 
+  // Line 1 margin is calculated as: Line 2 margin + font size - overlap
   const marginV_Line1 = marginV_Line2 + size2 - LINE_OVERLAP; 
   
   // Clean drop shadow settings (no outline)
@@ -151,18 +151,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     
     const lines = [];
     
-    // Line 1: Plain text (User expects this on TOP)
-    // FIX: Using STYLE2 (which has the LOW margin) to compensate for the reported visual swap bug.
+    // Line 1: Plain text (TOP) -> Assigned STYLE1 (Higher Margin)
     if (f.line1 && f.line1.trim() !== '') {
       const text1 = getPlainText(f.line1);
-      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE2,,0,0,0,,${text1}`);
+      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE1,,0,0,0,,${text1}`);
     }
     
-    // Line 2: Plain text (User expects this on BOTTOM)
-    // FIX: Using STYLE1 (which has the HIGH margin) to compensate for the reported visual swap bug.
+    // Line 2: Plain text (BOTTOM) -> Assigned STYLE2 (Lower Margin)
     if (f.line2 && f.line2.trim() !== '') {
       const text2 = getPlainText(f.line2);
-      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE1,,0,0,0,,${text2}`);
+      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE2,,0,0,0,,${text2}`);
     }
     
     return lines;
