@@ -88,10 +88,10 @@ function cssToAssColor(hex) {
 }
 
 
-// --- MODIFIED: framesToAss with NO Animation, Fixed Alignment, and Tighter Line Height (using \linesp) ---
+// --- MODIFIED: framesToAss with NO Animation, Fixed Alignment, and Tighter Line Height (using \linesp and compensatory swap) ---
 function framesToAss(frames, styles, playResX = 1920, playResY = 1080) {
   
-  // Style 1 (Top Line)
+  // Style 1 (Used for Visual BOTTOM Line Content due to compensation)
   const font1 = (styles && styles.fontTop) || 'Lexend';
   const size1 = (styles && styles.fontSizeTop) || 80;
   const color1Primary = cssToAssColor(styles && styles.colorTop); 
@@ -99,7 +99,7 @@ function framesToAss(frames, styles, playResX = 1920, playResY = 1080) {
   const weight1 = (styles && (styles.fontWeightTop === '700')) ? '1' : '0'; 
   const italic1 = (styles && styles.isItalicTop) ? '1' : '0'; 
 
-  // Style 2 (Bottom Line)
+  // Style 2 (Used for Visual TOP Line Content due to compensation)
   const font2 = (styles && styles.fontBottom) || 'Lexend';
   const size2 = (styles && styles.fontSizeBottom) || 80;
   const color2Primary = cssToAssColor(styles && styles.colorBottom); 
@@ -108,37 +108,18 @@ function framesToAss(frames, styles, playResX = 1920, playResY = 1080) {
   const italic2 = (styles && styles.isItalicBottom) ? '1' : '0';
   
   // --- Line Height & Padding Setup (using \linesp) ---
-  const marginV_Line2 = (styles && styles.paddingBottom) || 200; // Bottom line's margin
+  const marginV_Line2 = (styles && styles.paddingBottom) || 200; // BASE margin for the visual TOP line (assigned to STYLE2)
   
-  // Margin for the top line. Needs to be higher than Line 2's margin
-  // to position it above Line 2. A rough estimate based on font size.
-  // We want to achieve a very tight spacing. 
-  // For 'line height 0', we need the sum of font sizes plus a small negative value to overlap.
-  const visualGap = 10; // This is the total vertical space for 2 lines of text + desired gap
-                       // A positive gap means space between lines, a negative means overlap.
-                       // For "line height 0" or very tight, we want the top line's bottom edge 
-                       // to be near the bottom line's top edge.
-
-  // The actual spacing between lines is controlled by \linesp in the text itself.
-  // These MarginV values are primarily for the bottom edge alignment of the entire block.
-  // STYLE1 (Top line) will be placed relative to STYLE2 (Bottom line)
-  // Let's ensure STYLE1 is positioned to be just above STYLE2,
-  // without relying on manual pixel overlap to prevent inversion issues.
-  // The 'linesp' tag will control the tightness if a line wraps, or if there are multiple \N newlines.
-  // However, for two *separate* Dialogue events, MarginV still controls their relative positions.
-  
-  // Calculate top margin for STYLE1 to place it above STYLE2
-  // If size1 and size2 are similar, a good starting point for `marginV_Line1` to place it above `marginV_Line2`
-  // would be `marginV_Line2 + avg_font_size + minimal_gap`
+  // Calculate vertical offset for the visual BOTTOM line (assigned to STYLE1)
   const avgFontSize = (size1 + size2) / 2;
-  const idealVerticalOffset = avgFontSize * 1.0; // Minimal visual gap, for "touching" appearance
-
-  const marginV_Line1 = marginV_Line2 + idealVerticalOffset;
+  // Reduced to 0.9 to create a tighter, slightly overlapping vertical distance
+  const idealVerticalOffset = avgFontSize * 0.9; 
+  
+  // STYLE1 must have the higher MarginV value to be rendered lower (at the bottom of the screen)
+  const marginV_Line1 = marginV_Line2 + idealVerticalOffset; 
   
   // ASS \linesp override for tight spacing between lines *if* a single line wraps or uses \N
-  // For two separate dialogue events, this doesn't directly control their spacing, 
-  // but it's good practice for tight rendering.
-  const lineSpacing = '-0.5'; // Negative value for tighter line spacing/overlap if a line wraps
+  const lineSpacing = '-0.5'; 
   
   // Clean drop shadow settings (no outline)
   const shadowColor = '&H80000000'; // 50% opaque black shadow color
@@ -161,6 +142,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
   
   const getPlainText = (lineText) => {
+    // The text content should be clean for ASS
     return lineText ? lineText.trim() : '';
   };
   
@@ -168,20 +150,20 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     const startSec = (f.start || 0) / 1000;
     const endSec = (f.end || (startSec + 2000)) / 1000;
     const startAss = secToAss(startSec);
-    const endAss = secToAss(endSec);
+    const endAss = secToAss(endAss);
     
     const lines = [];
     
-    // Line 1: Plain text (TOP line content) -> Assigned STYLE1 (Higher Margin) - CORRECT ASSIGNMENT
+    // Line 1: (Visual TOP line content) -> Assigned STYLE2 (Lower MarginV) -> CORRECT ALIGNMENT DUE TO COMPENSATORY SWAP
     if (f.line1 && f.line1.trim() !== '') {
       const text1 = getPlainText(f.line1);
-      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE1,,0,0,0,,${text1}`);
+      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE2,,0,0,0,,${text1}`);
     }
     
-    // Line 2: Plain text (BOTTOM line content) -> Assigned STYLE2 (Lower Margin) - CORRECT ASSIGNMENT
+    // Line 2: (Visual BOTTOM line content) -> Assigned STYLE1 (Higher MarginV) -> CORRECT ALIGNMENT DUE TO COMPENSATORY SWAP
     if (f.line2 && f.line2.trim() !== '') {
       const text2 = getPlainText(f.line2);
-      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE2,,0,0,0,,${text2}`);
+      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE1,,0,0,0,,${text2}`);
     }
     
     return lines;
