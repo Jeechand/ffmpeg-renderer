@@ -137,36 +137,51 @@ function cssToAssColor(hex, alpha = '00') {
 }
 
 
-// --- FIXED: framesToAss (Italics, Spacing, AND Animation) ---
+// server.js
+// --- FIXED: framesToAss (Reads all new style properties) ---
 function framesToAss(frames, styles, playResX = 1920, playResY = 1080) {
     
-  // Style 1 (Top Line)
-  const font1 = (styles && styles.fontTop) || 'Lexend';
-  const size1 = (styles && styles.fontSizeTop) || 80;
-  const color1 = cssToAssColor(styles && styles.colorTop);
-  const weight1 = (styles && (styles.fontWeightTop === 'bold' || styles.fontWeightTop === '700')) ? '1' : '0';
-  // --- NEW: Read Italic style ---
-  const italic1 = (styles && styles.fontStyleTop === 'italic') ? '1' : '0';
+    // --- 1. Read Style Properties w/ Defaults ---
+    
+    // Positioning & Spacing
+    // NEW: Reads 'paddingBottom', defaults to 120 (100px + 20px higher as requested)
+    const marginV_Line2 = (styles && styles.paddingBottom) || 120;
+    // NEW: Reads 'lineHeight', defaults to 1.2 (your original CSS)
+    const lineHeight = (styles && styles.lineHeight) || 1.2; 
+    
+    // Animation Timing
+    // NEW: Reads 'fadeInMs', defaults to 500 (your original '0.5s')
+    const fadeInMs = (styles && styles.fadeInMs) || 500;
+    // NEW: Reads 'staggerMs', defaults to 50 (your original '0.05s')
+    const staggerMs = (styles && styles.staggerMs) || 50;
+    // NEW: Reads 'fadeOutMs', defaults to 150 (a sensible default)
+    const fadeOutMs = (styles && styles.fadeOutMs) || 150;
 
-  // Style 2 (Bottom Line)
-  const font2 = (styles && styles.fontBottom) || 'Lexend';
-  const size2 = (styles && styles.fontSizeBottom) || 80;
-  const color2 = cssToAssColor(styles && styles.colorBottom);
-  const weight2 = (styles && (styles.fontWeightBottom === 'bold' || styles.fontWeightBottom === '700')) ? '1' : '0';
-  // --- NEW: Read Italic style ---
-  const italic2 = (styles && styles.fontStyleBottom === 'italic') ? '1' : '0';
-  
-  const marginV_Line2 = (styles && styles.paddingBottom) || 100;
-  
-  // --- CHANGED: Spacing logic to match CSS 'line-height: 1.2' ---
-  const marginV_Line1 = marginV_Line2 + Math.round(size2 * 1.2); 
-  
-  // Shadow style from your CSS
-  const shadowColor = '&H80000000'; // 50% opaque black
-  const outline = 0;
-  const shadow = 2;
-  
-  const header = `[Script Info]
+    // Style 1 (Top Line)
+    const font1 = (styles && styles.fontTop) || 'Lexend';
+    const size1 = (styles && styles.fontSizeTop) || 80;
+    const color1 = cssToAssColor(styles && styles.colorTop);
+    const weight1 = (styles && (styles.fontWeightTop === 'bold' || styles.fontWeightTop === '700' || styles.fontWeightTop === 700 || styles.fontWeightTop === 400)) ? '1' : '0'; // Adjusted for 400
+    const italic1 = (styles && styles.fontStyleTop === 'italic') ? '1' : '0';
+
+    // Style 2 (Bottom Line)
+    const font2 = (styles && styles.fontBottom) || 'Lexend';
+    const size2 = (styles && styles.fontSizeBottom) || 80;
+    const color2 = cssToAssColor(styles && styles.colorBottom);
+    const weight2 = (styles && (styles.fontWeightTop === 'bold' || styles.fontWeightTop === '700' || styles.fontWeightTop === 700 || styles.fontWeightTop === 400)) ? '1' : '0'; // Adjusted for 700
+    const italic2 = (styles && styles.fontStyleBottom === 'italic') ? '1' : '0';
+    
+    // --- CHANGED: Spacing logic now uses your 'lineHeight' style property ---
+    const marginV_Line1 = marginV_Line2 + Math.round(size2 * lineHeight); 
+    
+    // --- 2. "Pop" Fix: Added Outline & Crisper Shadow ---
+    // This outline makes text "pop" on video, fixing the "dull" look.
+    const outlineColor = '&H60000000'; // 63% opaque black
+    const shadowColor = '&H80000000';  // 50% opaque black
+    const outline = 1.5; // Was 0
+    const shadow = 1;  // Was 2 (crisper)
+    
+    const header = `[Script Info]
 ScriptType: v4.00+
 PlayResX: ${playResX}
 PlayResY: ${playResY}
@@ -174,55 +189,55 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: STYLE1,${font1},${size1},${color1},&H000000FF,&H00000000,${shadowColor},${weight1},${italic1},0,0,100,100,0,0,1,${outline},${shadow},2,20,20,${marginV_Line1},1
-Style: STYLE2,${font2},${size2},${color2},&H000000FF,&H00000000,${shadowColor},${weight2},${italic2},0,0,100,100,0,0,1,${outline},${shadow},2,20,20,${marginV_Line2},1
+Style: STYLE1,${font1},${size1},${color1},&H000000FF,${outlineColor},${shadowColor},${weight1},${italic1},0,0,100,100,0,0,1,${outline},${shadow},2,20,20,${marginV_Line1},1
+Style: STYLE2,${font2},${size2},${color2},&H000000FF,${outlineColor},${shadowColor},${weight2},${italic2},0,0,100,100,0,0,1,${outline},${shadow},2,20,20,${marginV_Line2},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
-  
-  const events = frames.flatMap(f => {
-    const startSec = (f.start || 0) / 1000;
-    const endSec = (f.end || (startSec + 2000)) / 1000;
-    const startAss = secToAss(startSec);
-    const endAss = secToAss(endSec);
     
-    const lines = [];
-    
-    // --- NEW ANIMATION LOGIC ---
-    // These values are taken directly from your Bubble CSS/JS
-    const staggerMs = 50;   // 50ms stagger (index * 0.05)
-    const animDurationMs = 500; // 500ms fade-in (animation: wordFadeUp 0.5s)
+    const events = frames.flatMap(f => {
+        const startMs = (f.start || 0);
+        const endMs = (f.end || (startMs + 2000));
+        const startAss = secToAss(startMs / 1000);
+        const endAss = secToAss(endMs / 1000);
 
-    if (f.line1 && f.line1.trim() !== '') {
-        const words = f.line1.split(/\s+/).filter(w => w.length > 0);
-        let animatedText = "";
-        words.forEach((word, index) => {
-            const startTime = index * staggerMs;
-            const endTime = startTime + animDurationMs;
-            // \alpha&HFF& = Start 100% transparent
-            // \t(start, end, \alpha&H00&) = Animate to 0% transparent (opaque) over the time
-            animatedText += `{\\alpha&HFF&\\t(${startTime}, ${endTime}, \\alpha&H00&)}${word.replace(/\n/g, '\\N')} `;
-        });
-        lines.push(`Dialogue: 0,${startAss},${endAss},STYLE1,,0,0,0,,${animatedText.trim()}`);
-    }
+        // --- 3. Animation Fix: Reads your timing values ---
+        // We will add a line-level fade-out, and a word-level fade-in
+        const lineFadeOutTag = `{\\fad(0, ${fadeOutMs})}`;
+        
+        const lines = [];
+
+        if (f.line1 && f.line1.trim() !== '') {
+            const words = f.line1.split(/\s+/).filter(w => w.length > 0);
+            let animatedText = "";
+            words.forEach((word, index) => {
+                const startTime = index * staggerMs;
+                const endTime = startTime + fadeInMs;
+                animatedText += `{\\alpha&HFF&\\t(${startTime}, ${endTime}, \\alpha&H00&)}${word.replace(/\n/g, '\\N')} `;
+            });
+            // Apply line-level fade out AND word-level fade in
+            lines.push(`Dialogue: 0,${startAss},${endAss},STYLE1,,0,0,0,,${lineFadeOutTag}${animatedText.trim()}`);
+        }
+        
+        if (f.line2 && f.line2.trim() !== '') {
+            const words = f.line2.split(/\s+/).filter(w => w.length > 0);
+            let animatedText = "";
+            words.forEach((word, index) => {
+                const startTime = index * staggerMs;
+                const endTime = startTime + fadeInMs;
+                animatedText += `{\\alpha&HFF&\\t(${startTime}, ${endTime}, \\alpha&H00&)}${word.replace(/\n/g, '\\N')} `;
+            });
+            // Apply line-level fade out AND word-level fade in
+            lines.push(`Dialogue: 0,${startAss},${endAss},STYLE2,,0,0,0,,${lineFadeOutTag}${animatedText.trim()}`);
+        }
+        
+        return lines;
+    }).join('\n');
     
-    if (f.line2 && f.line2.trim() !== '') {
-        const words = f.line2.split(/\s+/).filter(w => w.length > 0);
-        let animatedText = "";
-        words.forEach((word, index) => {
-            const startTime = index * staggerMs;
-            const endTime = startTime + animDurationMs;
-            animatedText += `{\\alpha&HFF&\\t(${startTime}, ${endTime}, \\alpha&H00&)}${word.replace(/\n/g, '\\N')} `;
-        });
-        lines.push(`Dialogue: 0,${startAss},${endAss},STYLE2,,0,0,0,,${animatedText.trim()}`);
-    }
-    
-    return lines;
-  }).join('\n');
-  
-  return header + events;
+    return header + events;
 }
+
 
 async function getVideoResolution(inputPath) {
   try {
