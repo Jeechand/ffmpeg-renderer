@@ -104,9 +104,14 @@ function findFirstFontFile(startDir) {
   return null;
 }
 
+// --- FIXED: cssToAssColor ---
+// Uses a better, darker yellow (#F7B500)
 function cssToAssColor(hex, alpha = '00') {
   if (hex === 'white') hex = '#FFFFFF';
-  if (hex === 'yellow') hex = '#FFFF00';
+  
+  // --- THIS LINE IS CHANGED ---
+  if (hex === 'yellow') hex = '#F7B500'; // Using a darker, video-safe yellow (was #FFFF00)
+  
   if (hex === 'black') hex = '#000000';
 
   if (!hex || typeof hex !== 'string' || !hex.startsWith('#')) {
@@ -116,13 +121,13 @@ function cssToAssColor(hex, alpha = '00') {
   let r, g, b;
   
   if (hex.length === 7) { // #RRGGBB
-     r = hex.substring(1, 3);
-     g = hex.substring(3, 5);
-     b = hex.substring(5, 7);
+    r = hex.substring(1, 3);
+    g = hex.substring(3, 5);
+    b = hex.substring(5, 7);
   } else if (hex.length === 4) { // #RGB
-     r = hex.substring(1, 2).repeat(2);
-     g = hex.substring(2, 3).repeat(2);
-     b = hex.substring(3, 4).repeat(2);
+    r = hex.substring(1, 2).repeat(2);
+    g = hex.substring(2, 3).repeat(2);
+    b = hex.substring(3, 4).repeat(2);
   } else {
     return '&H00FFFFFF'; // Default on invalid length
   }
@@ -132,35 +137,34 @@ function cssToAssColor(hex, alpha = '00') {
 }
 
 
-// --- REPLACED framesToAss FUNCTION ---
-// Re-styled to match the Bubble preview (large font, drop shadow, no outline)
+// --- FIXED: framesToAss (Italics, Spacing, AND Animation) ---
 function framesToAss(frames, styles, playResX = 1920, playResY = 1080) {
-  
-  // Style 1 (Top Line) - from your Bubble JS
-  // --- MODIFIED: Increased font size to match target image ---
+    
+  // Style 1 (Top Line)
   const font1 = (styles && styles.fontTop) || 'Lexend';
-  const size1 = (styles && styles.fontSizeTop) || 80; // Increased from 48/56
+  const size1 = (styles && styles.fontSizeTop) || 80;
   const color1 = cssToAssColor(styles && styles.colorTop);
   const weight1 = (styles && (styles.fontWeightTop === 'bold' || styles.fontWeightTop === '700')) ? '1' : '0';
+  // --- NEW: Read Italic style ---
+  const italic1 = (styles && styles.fontStyleTop === 'italic') ? '1' : '0';
 
-  // Style 2 (Bottom Line) - from your Bubble JS
-  // --- MODIFIED: Increased font size to match target image ---
+  // Style 2 (Bottom Line)
   const font2 = (styles && styles.fontBottom) || 'Lexend';
-  const size2 = (styles && styles.fontSizeBottom) || 80; // Increased from 48/56
+  const size2 = (styles && styles.fontSizeBottom) || 80;
   const color2 = cssToAssColor(styles && styles.colorBottom);
   const weight2 = (styles && (styles.fontWeightBottom === 'bold' || styles.fontWeightBottom === '700')) ? '1' : '0';
+  // --- NEW: Read Italic style ---
+  const italic2 = (styles && styles.fontStyleBottom === 'italic') ? '1' : '0';
   
-  // --- MODIFIED: Using 100px default to match Bubble CSS ---
   const marginV_Line2 = (styles && styles.paddingBottom) || 100;
   
-  // Margin for Line 1: It's Line 2's margin + Line 2's *font size* + a small gap
-  const marginV_Line1 = marginV_Line2 + size2 + 15; // 15px gap
+  // --- CHANGED: Spacing logic to match CSS 'line-height: 1.2' ---
+  const marginV_Line1 = marginV_Line2 + Math.round(size2 * 1.2); 
   
-  // --- MODIFIED: ShadowColor, Outline=0, Shadow=2 ---
-  // This replicates the `text-shadow: 1px 1px 2px #000000;` from your CSS
+  // Shadow style from your CSS
   const shadowColor = '&H80000000'; // 50% opaque black
-  const outline = 0; // No outline
-  const shadow = 2; // Shadow distance
+  const outline = 0;
+  const shadow = 2;
   
   const header = `[Script Info]
 ScriptType: v4.00+
@@ -170,8 +174,8 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: STYLE1,${font1},${size1},${color1},&H000000FF,&H00000000,${shadowColor},${weight1},0,0,0,100,100,0,0,1,${outline},${shadow},2,20,20,${marginV_Line1},1
-Style: STYLE2,${font2},${size2},${color2},&H000000FF,&H00000000,${shadowColor},${weight2},0,0,0,100,100,0,0,1,${outline},${shadow},2,20,20,${marginV_Line2},1
+Style: STYLE1,${font1},${size1},${color1},&H000000FF,&H00000000,${shadowColor},${weight1},${italic1},0,0,100,100,0,0,1,${outline},${shadow},2,20,20,${marginV_Line1},1
+Style: STYLE2,${font2},${size2},${color2},&H000000FF,&H00000000,${shadowColor},${weight2},${italic2},0,0,100,100,0,0,1,${outline},${shadow},2,20,20,${marginV_Line2},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -185,14 +189,33 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     
     const lines = [];
     
+    // --- NEW ANIMATION LOGIC ---
+    // These values are taken directly from your Bubble CSS/JS
+    const staggerMs = 50;   // 50ms stagger (index * 0.05)
+    const animDurationMs = 500; // 500ms fade-in (animation: wordFadeUp 0.5s)
+
     if (f.line1 && f.line1.trim() !== '') {
-      const text1 = f.line1.replace(/\n/g, '\\N');
-      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE1,,0,0,0,,${text1}`);
+        const words = f.line1.split(/\s+/).filter(w => w.length > 0);
+        let animatedText = "";
+        words.forEach((word, index) => {
+            const startTime = index * staggerMs;
+            const endTime = startTime + animDurationMs;
+            // \alpha&HFF& = Start 100% transparent
+            // \t(start, end, \alpha&H00&) = Animate to 0% transparent (opaque) over the time
+            animatedText += `{\\alpha&HFF&\\t(${startTime}, ${endTime}, \\alpha&H00&)}${word.replace(/\n/g, '\\N')} `;
+        });
+        lines.push(`Dialogue: 0,${startAss},${endAss},STYLE1,,0,0,0,,${animatedText.trim()}`);
     }
     
     if (f.line2 && f.line2.trim() !== '') {
-      const text2 = f.line2.replace(/\n/g, '\\N');
-      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE2,,0,0,0,,${text2}`);
+        const words = f.line2.split(/\s+/).filter(w => w.length > 0);
+        let animatedText = "";
+        words.forEach((word, index) => {
+            const startTime = index * staggerMs;
+            const endTime = startTime + animDurationMs;
+            animatedText += `{\\alpha&HFF&\\t(${startTime}, ${endTime}, \\alpha&H00&)}${word.replace(/\n/g, '\\N')} `;
+        });
+        lines.push(`Dialogue: 0,${startAss},${endAss},STYLE2,,0,0,0,,${animatedText.trim()}`);
     }
     
     return lines;
