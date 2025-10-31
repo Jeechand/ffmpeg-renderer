@@ -104,14 +104,9 @@ function findFirstFontFile(startDir) {
   return null;
 }
 
-// --- FIXED: cssToAssColor ---
-// Uses a better, darker yellow (#F7B500)
 function cssToAssColor(hex, alpha = '00') {
   if (hex === 'white') hex = '#FFFFFF';
-  
-  // --- THIS LINE IS CHANGED ---
-  if (hex === 'yellow') hex = '#F7B500'; // Using a darker, video-safe yellow (was #FFFF00)
-  
+  if (hex === 'yellow') hex = '#FFFF00';
   if (hex === 'black') hex = '#000000';
 
   if (!hex || typeof hex !== 'string' || !hex.startsWith('#')) {
@@ -121,13 +116,13 @@ function cssToAssColor(hex, alpha = '00') {
   let r, g, b;
   
   if (hex.length === 7) { // #RRGGBB
-    r = hex.substring(1, 3);
-    g = hex.substring(3, 5);
-    b = hex.substring(5, 7);
+     r = hex.substring(1, 3);
+     g = hex.substring(3, 5);
+     b = hex.substring(5, 7);
   } else if (hex.length === 4) { // #RGB
-    r = hex.substring(1, 2).repeat(2);
-    g = hex.substring(2, 3).repeat(2);
-    b = hex.substring(3, 4).repeat(2);
+     r = hex.substring(1, 2).repeat(2);
+     g = hex.substring(2, 3).repeat(2);
+     b = hex.substring(3, 4).repeat(2);
   } else {
     return '&H00FFFFFF'; // Default on invalid length
   }
@@ -137,51 +132,37 @@ function cssToAssColor(hex, alpha = '00') {
 }
 
 
-// server.js
-// --- FIXED: framesToAss (Reads all new style properties) ---
+// --- MODIFIED: framesToAss with Simplified Animation and fixed styles ---
 function framesToAss(frames, styles, playResX = 1920, playResY = 1080) {
-    
-    // --- 1. Read Style Properties w/ Defaults ---
-    
-    // Positioning & Spacing
-    // NEW: Reads 'paddingBottom', defaults to 120 (100px + 20px higher as requested)
-    const marginV_Line2 = (styles && styles.paddingBottom) || 120;
-    // NEW: Reads 'lineHeight', defaults to 1.2 (your original CSS)
-    const lineHeight = (styles && styles.lineHeight) || 1.2; 
-    
-    // Animation Timing
-    // NEW: Reads 'fadeInMs', defaults to 500 (your original '0.5s')
-    const fadeInMs = (styles && styles.fadeInMs) || 500;
-    // NEW: Reads 'staggerMs', defaults to 50 (your original '0.05s')
-    const staggerMs = (styles && styles.staggerMs) || 50;
-    // NEW: Reads 'fadeOutMs', defaults to 150 (a sensible default)
-    const fadeOutMs = (styles && styles.fadeOutMs) || 150;
+  
+  // Style 1 (Top Line: Semibold)
+  // We use fontTop (e.g., 'Lexend Semibold') and set weight1 to '0' (non-bold) 
+  // unless explicitly 700, letting the font file determine the weight.
+  const font1 = (styles && styles.fontTop) || 'Lexend';
+  const size1 = (styles && styles.fontSizeTop) || 80;
+  const color1 = cssToAssColor(styles && styles.colorTop);
+  // Semibold is typically 600, so we default to non-bold (0)
+  const weight1 = (styles && (styles.fontWeightTop === '700')) ? '1' : '0'; 
+  const italic1 = (styles && styles.isItalicTop) ? '1' : '0'; 
 
-    // Style 1 (Top Line)
-    const font1 = (styles && styles.fontTop) || 'Lexend';
-    const size1 = (styles && styles.fontSizeTop) || 80;
-    const color1 = cssToAssColor(styles && styles.colorTop);
-    const weight1 = (styles && (styles.fontWeightTop === 'bold' || styles.fontWeightTop === '700' || styles.fontWeightTop === 700 || styles.fontWeightTop === 400)) ? '1' : '0'; // Adjusted for 400
-    const italic1 = (styles && styles.fontStyleTop === 'italic') ? '1' : '0';
-
-    // Style 2 (Bottom Line)
-    const font2 = (styles && styles.fontBottom) || 'Lexend';
-    const size2 = (styles && styles.fontSizeBottom) || 80;
-    const color2 = cssToAssColor(styles && styles.colorBottom);
-    const weight2 = (styles && (styles.fontWeightTop === 'bold' || styles.fontWeightTop === '700' || styles.fontWeightTop === 700 || styles.fontWeightTop === 400)) ? '1' : '0'; // Adjusted for 700
-    const italic2 = (styles && styles.fontStyleBottom === 'italic') ? '1' : '0';
-    
-    // --- CHANGED: Spacing logic now uses your 'lineHeight' style property ---
-    const marginV_Line1 = marginV_Line2 + Math.round(size2 * lineHeight); 
-    
-    // --- 2. "Pop" Fix: Added Outline & Crisper Shadow ---
-    // This outline makes text "pop" on video, fixing the "dull" look.
-    const outlineColor = '&H60000000'; // 63% opaque black
-    const shadowColor = '&H80000000';  // 50% opaque black
-    const outline = 1.5; // Was 0
-    const shadow = 1;  // Was 2 (crisper)
-    
-    const header = `[Script Info]
+  // Style 2 (Bottom Line: Bold Italic 700)
+  // Explicitly setting weight2='1' for Bold and italic2='1' for Italic
+  const font2 = (styles && styles.fontBottom) || 'Lexend';
+  const size2 = (styles && styles.fontSizeBottom) || 80;
+  const color2 = cssToAssColor(styles && styles.colorBottom);
+  const weight2 = (styles && (styles.fontWeightBottom === '700')) ? '1' : '0';
+  const italic2 = (styles && styles.isItalicBottom) ? '1' : '0';
+  
+  // --- UPDATED: Padding set to 200px ---
+  const marginV_Line2 = (styles && styles.paddingBottom) || 200;
+  const marginV_Line1 = marginV_Line2 + size2 + 15;
+  
+  // Clean drop shadow settings (no outline)
+  const shadowColor = '&H80000000'; // 50% opaque black shadow color
+  const outline = 0; // <-- REMOVED OUTLINE
+  const shadow = 2; // Shadow distance
+  
+  const header = `[Script Info]
 ScriptType: v4.00+
 PlayResX: ${playResX}
 PlayResY: ${playResY}
@@ -189,55 +170,38 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: STYLE1,${font1},${size1},${color1},&H000000FF,${outlineColor},${shadowColor},${weight1},${italic1},0,0,100,100,0,0,1,${outline},${shadow},2,20,20,${marginV_Line1},1
-Style: STYLE2,${font2},${size2},${color2},&H000000FF,${outlineColor},${shadowColor},${weight2},${italic2},0,0,100,100,0,0,1,${outline},${shadow},2,20,20,${marginV_Line2},1
+Style: STYLE1,${font1},${size1},${color1},&H000000FF,&H00000000,${shadowColor},${weight1},${italic1},0,0,100,100,0,0,1,${outline},${shadow},2,20,20,${marginV_Line1},1
+Style: STYLE2,${font2},${size2},${color2},&H000000FF,&H00000000,${shadowColor},${weight2},${italic2},0,0,100,100,0,0,1,${outline},${shadow},2,20,20,${marginV_Line2},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
+  
+  const events = frames.flatMap(f => {
+    const startSec = (f.start || 0) / 1000;
+    const endSec = (f.end || (startSec + 2000)) / 1000;
+    const startAss = secToAss(startSec);
+    const endAss = secToAss(endSec);
     
-    const events = frames.flatMap(f => {
-        const startMs = (f.start || 0);
-        const endMs = (f.end || (startMs + 2000));
-        const startAss = secToAss(startMs / 1000);
-        const endAss = secToAss(endMs / 1000);
-
-        // --- 3. Animation Fix: Reads your timing values ---
-        // We will add a line-level fade-out, and a word-level fade-in
-        const lineFadeOutTag = `{\\fad(0, ${fadeOutMs})}`;
-        
-        const lines = [];
-
-        if (f.line1 && f.line1.trim() !== '') {
-            const words = f.line1.split(/\s+/).filter(w => w.length > 0);
-            let animatedText = "";
-            words.forEach((word, index) => {
-                const startTime = index * staggerMs;
-                const endTime = startTime + fadeInMs;
-                animatedText += `{\\alpha&HFF&\\t(${startTime}, ${endTime}, \\alpha&H00&)}${word.replace(/\n/g, '\\N')} `;
-            });
-            // Apply line-level fade out AND word-level fade in
-            lines.push(`Dialogue: 0,${startAss},${endAss},STYLE1,,0,0,0,,${lineFadeOutTag}${animatedText.trim()}`);
-        }
-        
-        if (f.line2 && f.line2.trim() !== '') {
-            const words = f.line2.split(/\s+/).filter(w => w.length > 0);
-            let animatedText = "";
-            words.forEach((word, index) => {
-                const startTime = index * staggerMs;
-                const endTime = startTime + fadeInMs;
-                animatedText += `{\\alpha&HFF&\\t(${startTime}, ${endTime}, \\alpha&H00&)}${word.replace(/\n/g, '\\N')} `;
-            });
-            // Apply line-level fade out AND word-level fade in
-            lines.push(`Dialogue: 0,${startAss},${endAss},STYLE2,,0,0,0,,${lineFadeOutTag}${animatedText.trim()}`);
-        }
-        
-        return lines;
-    }).join('\n');
+    const lines = [];
     
-    return header + events;
+    // Line 1: Static display for the whole duration
+    if (f.line1 && f.line1.trim() !== '') {
+      const text1 = f.line1.replace(/\n/g, '\\N');
+      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE1,,0,0,0,,${text1}`);
+    }
+    
+    // Line 2: Static display for the whole duration
+    if (f.line2 && f.line2.trim() !== '') {
+      const text2 = f.line2.replace(/\n/g, '\\N');
+      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE2,,0,0,0,,${text2}`);
+    }
+    
+    return lines;
+  }).join('\n');
+  
+  return header + events;
 }
-
 
 async function getVideoResolution(inputPath) {
   try {
@@ -262,7 +226,7 @@ app.post('/render', async (req, res) => {
       return res.status(401).json({ status: 'error', error: 'unauthorized' });
     }
 
-    const { job_id, reservation_id, video_url, frames, style, callback_url, plan_tier } = req.body || {};
+    const { job_id, video_url, frames, style, callback_url, logo_url } = req.body || {};
 
     if (!video_url || !frames) {
       return res.status(400).json({ status: 'error', error: 'missing fields - require video_url and frames' });
@@ -272,7 +236,7 @@ app.post('/render', async (req, res) => {
     const tmpDir = '/tmp';
     const inputPath = path.join(tmpDir, `in-${job_id}.mp4`);
     const assPath = path.join(tmpDir, `subs-${job_id}.ass`);
-    // --- REMOVED GRADIENT PATH ---
+    const logoPath = path.join(tmpDir, `logo-${job_id}.png`); 
     const outPath = path.join(tmpDir, `out-${job_id}.mp4`);
 
     // 1) Download the input video
@@ -284,60 +248,82 @@ app.post('/render', async (req, res) => {
       writer.on('error', reject);
     });
 
-    // 2) Create ASS subtitles
+    // 2) Download logo if provided
+    let logoInput = null;
+    let mainVideoInputIndex = '0:v'; // Standard video input index
+
+    if (logo_url) {
+        try {
+            const logoWriter = (await axios({ url: logo_url, method: 'GET', responseType: 'stream' })).data;
+            const logoOutStream = fsSync.createWriteStream(logoPath);
+            await new Promise((resolve, reject) => {
+                logoWriter.pipe(logoOutStream);
+                logoWriter.on('end', resolve);
+                logoWriter.on('error', reject);
+            });
+            logoInput = logoPath;
+            mainVideoInputIndex = '1:v'; // Video becomes input 1 when logo is input 0
+        } catch (e) {
+            console.error('Failed to download logo:', e.message);
+            // Non-fatal: just continue without a logo
+        }
+    }
+
+    // 3) Create ASS subtitles
     const ass = framesToAss(frames, style);
     await fs.writeFile(assPath, ass, 'utf8');
 
-    // 3) --- REMOVED GRADIENT GENERATION ---
-
-    // 4) Decide watermark via drawtext (ffmpeg)
-    const addWatermark = (plan_tier === 'free' || plan_tier === 'trial');
-    const watermarkText = (style && style.watermarkText) ? style.watermarkText : 'YourBrand';
-
-    let fontFile = '';
-    try {
-        const preferredFontName = (style && style.fontTop) || 'Lexend';
-        fontFile = findFontFile('/app/fonts', preferredFontName);
-        
-        if (!fontFile) {
-            fontFile = findFirstFontFile('/app/fonts');
-        }
-    } catch (e) {
-        console.warn("Error searching for fonts:", e.message);
-        fontFile = ''; // Will default to 'Sans'
-    }
-
-    const escapedText = watermarkText.replace(/[:']/g, ""); 
-    const drawtextSnippet = addWatermark
-      ? (fontFile
-          ? `drawtext=fontfile='${fontFile}':text='${escapedText}':fontsize=28:fontcolor=white@0.7:x=main_w-tw-10:y=main_h-th-10`
-          : `drawtext=font='Sans':text='${escapedText}':fontsize=28:fontcolor=white@0.7:x=main_w-tw-10:y=main_h-th-10`)
-      : '';
-
-    // 5) Build ffmpeg filter_complex
-    // --- MODIFIED: Simplified filter_complex, removed gradient overlay ---
+    // 4) Build ffmpeg filter_complex
     let ffArgs;
     const assFilter = `ass=filename=${assPath}:fontsdir=/app/fonts`;
+    let filterComplex;
 
-    if (addWatermark) {
-      ffArgs = [
-        '-y', '-i', inputPath,
-        // No gradient input
-        '-filter_complex',
-        `[0:v]${drawtextSnippet}[tmpv];[tmpv]${assFilter}[v]`, // Chain ass filter after drawtext
-        '-map', '[v]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath
-      ];
+    const WATERMARK_TEXT = "AiVideoCaptioner";
+    const LOGO_SIZE = 50; // Size for the logo image
+    const PADDING = 32; // 32px padding for watermark
+
+    // 4a. Watermark setup: Logo or Text
+    if (logoInput) {
+        // Logo setup: scale logo and overlay it onto the main video
+        filterComplex = 
+            `[0:v]scale=w=${LOGO_SIZE}:h=${LOGO_SIZE}[logo];` + // Scale logo (Input 0)
+            `[1:v][logo]overlay=x=main_w-overlay_w-${PADDING}:y=main_h-overlay_h-${PADDING}[v_wm]`; // Overlay logo onto video (Input 1)
+        
+        // Final Chain: [v_wm] -> ASS -> [v]
+        filterComplex += `;[v_wm]${assFilter}[v]`;
+
+        ffArgs = [
+            '-y', 
+            '-i', logoInput, // Input 0: Logo
+            '-i', inputPath, // Input 1: Video
+            '-filter_complex', filterComplex,
+            '-map', '[v]', '-map', '1:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath
+        ];
+
     } else {
-      ffArgs = [
-        '-y', '-i', inputPath,
-        // No gradient input
-        '-filter_complex',
-        `[0:v]${assFilter}[v]`, // Just apply ass filter
-        '-map', '[v]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath
-      ];
+        // Text Watermark setup (No logo provided)
+        const watermarkDrawText = 
+          `drawtext=` +
+          `fontfile='Lexend-Regular.ttf':` + // Assumes Lexend-Regular is available
+          `text='${WATERMARK_TEXT}':` +
+          `fontsize=36:` +
+          `fontcolor=white@0.7:` +
+          `x=main_w-tw-${PADDING}:` +
+          `y=main_h-th-${PADDING}[v_wm]`;
+
+        // Final Chain: [0:v] -> Watermark Drawtext -> ASS -> [v]
+        filterComplex = `[0:v]${watermarkDrawText};[v_wm]${assFilter}[v]`;
+        
+        ffArgs = [
+            '-y', 
+            '-i', inputPath,
+            '-filter_complex', filterComplex,
+            '-map', '[v]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath
+        ];
     }
 
-    // 6) Run ffmpeg
+
+    // 5) Run ffmpeg
     try {
       await runFFmpeg(ffArgs);
     } catch (ffErr) {
@@ -345,7 +331,7 @@ app.post('/render', async (req, res) => {
       return res.status(500).json({ status: 'error', error: 'ffmpeg failed: ' + ffErr.message });
     }
 
-    // 7) Upload result to GCS
+    // 6) Upload result to GCS
     const destName = `renders/${job_id}-${Date.now()}.mp4`;
     let publicUrl;
     try {
@@ -355,12 +341,11 @@ app.post('/render', async (req, res) => {
       return res.status(500).json({ status: 'error', error: 'upload failed: ' + uerr.message });
     }
 
-    // 8) Optional callback to Bubble
+    // 7) Optional callback to Bubble
     if (callback_url) {
       try {
         await axios.post(callback_url, {
-          render__secret: RENDER_SECRET,
-          reservation_id,
+          render_secret: RENDER_SECRET,
           job_id,
           status: 'success',
           video_url: publicUrl
@@ -370,7 +355,7 @@ app.post('/render', async (req, res) => {
       }
     }
 
-    // 9) Respond
+    // 8) Respond
     return res.json({ status: 'success', job_id, video_url: publicUrl });
 
   } catch (err) {
