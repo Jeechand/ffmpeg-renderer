@@ -39,12 +39,12 @@ async function uploadToGCS(localPath, destName) {
 
   const file = bucket.file(destName);
 
-  // Create a signed URL valid for 30 days (adjust expires as you like)
-  const expiresMs = Date.now() + 30 * 24 * 60 * 60 * 1000; // 30 days
+  // Create a signed URL valid for 7 days (max allowed)
+  const expiresDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
   const [signedUrl] = await file.getSignedUrl({
     version: 'v4',
     action: 'read',
-    expires: expiresMs
+    expires: expiresDate
   });
 
   return signedUrl;
