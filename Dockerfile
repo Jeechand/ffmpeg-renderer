@@ -19,6 +19,8 @@ RUN npm install --production
 COPY . .
 
 # Refresh font cache (so custom fonts in /fonts are available)
+# after COPY . .
+COPY fonts /app/fonts
 RUN fc-cache -f -v || true
 
 ENV PORT=8080
