@@ -14,7 +14,9 @@ const storage = new Storage();
 const BUCKET = process.env.BUCKET_NAME || '';
 const RENDER_SECRET = process.env.RENDER_SECRET || 'change_me';
 
-// small helpers
+// -------------------------
+// Utilities
+// -------------------------
 function runFFmpeg(args) {
   return new Promise((resolve, reject) => {
     const ff = spawn('ffmpeg', args, { stdio: 'inherit' });
@@ -59,54 +61,50 @@ async function getVideoResolution(inputPath) {
   }
 }
 
-/**
- * framesToAss(frames, styles, videoWidth, videoHeight)
- *
- * Goal:
- * - Keep the bottom line (line2) anchored to paddingBottom (scaled).
- * - Place top line (line1) above it so it DOES NOT push the bottom line.
- * - Ensure both lines are horizontally centered around the same X (use \an5 anchor inside overrides).
- *
- * Notes:
- * - uses small heuristic based on scaled font sizes to approximate visual baselines.
- * - you can tweak `baselineFactorBottom` / `baselineFactorTop` / `extraGapFactor` if you want different spacing.
- */
-function framesToAss(frames, styles, videoWidth, videoHeight) {
+// -------------------------
+// Tuned framesToAss() for Lexend(40) + Cormorant Garamond(52) usage
+// - anchors the bottom line (line2) at paddingBottom
+// - positions top line (line1) above it with tuned baseline heuristics
+// - uses {\an5\pos(...)} so both lines are centered at the exact same X
+// -------------------------
+function framesToAss(frames, styles = {}, videoWidth, videoHeight) {
   const playResX = videoWidth;
   const playResY = videoHeight;
-  const referenceHeight = 1080;
+  const refH = 1080;
 
-  // fonts & sizes
-  const fontTop = (styles && styles.fontTop) || 'Lexend';
-  const fontBottom = (styles && styles.fontBottom) || 'Cormorant Garamond';
-  const fontSizeTop = (styles && styles.fontSizeTop) || 64;
-  const fontSizeBottom = (styles && styles.fontSizeBottom) || 100;
-  const colorTop = cssToAssColor(styles && styles.colorTop);
-  const colorBottom = cssToAssColor(styles && styles.colorBottom);
-  const boldTop = (styles && styles.fontWeightTop === '700') ? '1' : '0';
-  const boldBottom = (styles && styles.fontWeightBottom === '700') ? '1' : '0';
-  const italicTop = (styles && styles.isItalicTop) ? '1' : '0';
-  const italicBottom = (styles && styles.isItalicBottom) ? '1' : '0';
-  const paddingBottom = (styles && styles.paddingBottom) || 200;
+  const fontTop = styles.fontTop || 'Lexend';
+  const fontBottom = styles.fontBottom || 'Cormorant Garamond';
+  const fontSizeTop = styles.fontSizeTop || 40;
+  const fontSizeBottom = styles.fontSizeBottom || 52;
+  const colorTop = cssToAssColor(styles.colorTop || '#FFFFFF');
+  const colorBottom = cssToAssColor(styles.colorBottom || '#FFD100');
+  const boldTop = (styles.fontWeightTop === '700') ? '1' : '0';
+  const boldBottom = (styles.fontWeightBottom === '700') ? '1' : '0';
+  const italicTop = styles.isItalicTop ? '1' : '0';
+  const italicBottom = styles.isItalicBottom ? '1' : '0';
+  const paddingBottom = styles.paddingBottom || 200;
 
-  // scale to actual video height
-  const scale = playResY / referenceHeight;
+  // scale metrics to the actual video height
+  const scale = playResY / refH;
   const scaledTop = fontSizeTop * scale;
   const scaledBottom = fontSizeBottom * scale;
-  const baseGap = 12 * scale; // minimal visual gap
+  const baseGap = 18 * scale; // tuned base gap
 
-  // Heuristic: fonts have different visual baselines. These factors approximate the portion of font-size
-  // between baseline and glyph top/bottom that visually matters. Tweak if you want closer/farther spacing.
-  const baselineFactorBottom = 0.55; // how much of bottom font height to reserve above its baseline
-  const baselineFactorTop = 0.35; // how much of top font extends above its baseline
-  const extraGapFactor = 0.15; // small extra separation as fraction of bottom font size
+  // Tuned baseline heuristics for these fonts/sizes:
+  // - Cormorant has larger descenders/visual height so allocate a larger factor
+  // - Lexend sits higher visually, so smaller factor
+  const baselineFactorBottom = 0.65; // portion of bottom font height to reserve above its baseline
+  const baselineFactorTop = 0.30;    // portion of top font that visually extends above baseline
+  const extraGapFactor = 0.20;       // additional separation as fraction of bottom font size
 
-  // compute actual positions
-  const Y_pos_Line2 = playResY - (paddingBottom * scale); // bottom anchored (measured from top)
-  // top Y: move up by (portion of bottom font height) + (portion of top font height) + baseGap
-  const Y_pos_Line1 = Y_pos_Line2 - (scaledBottom * baselineFactorBottom) - (scaledTop * baselineFactorTop) - (baseGap + scaledBottom * extraGapFactor);
+  // Compute Y positions (measured from top)
+  const Y_pos_Line2 = playResY - (paddingBottom * scale); // bottom anchored
+  const Y_pos_Line1 = Y_pos_Line2
+    - (scaledBottom * baselineFactorBottom)
+    - (scaledTop * baselineFactorTop)
+    - (baseGap + scaledBottom * extraGapFactor);
 
-  // ASS header
+  // ASS header and styles
   const shadowColor = '&H80000000';
   const header = `[Script Info]
 ScriptType: v4.00+
@@ -124,6 +122,8 @@ Style: STYLE_TOP,${fontTop},${fontSizeTop},${colorTop},${colorTop},&H00000000,${
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
 
+  const centerX = Math.round(playResX / 2);
+
   const events = frames.flatMap(f => {
     const startSec = (f.start || 0) / 1000;
     const endSec = (f.end || ( (f.start || 0) + 2000 )) / 1000;
@@ -131,21 +131,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     const assEnd = secToAss(endSec);
     const out = [];
 
-    // NOTE: using override {\an5\pos(x,y)} forces the *center* of the text to be at x,y (consistent anchor)
-    // this avoids reliance on style alignment which sometimes produces different origin points.
-    const centerX = Math.round(playResX / 2);
-
-    if (f.line1 && f.line1.trim() !== '') {
-      // escape ASS reserved chars minimally (commonly used): replace newline -> \N (we keep other chars as-is)
+    if (f.line1 && f.line1.trim()) {
       const t1 = f.line1.trim().replace(/\n/g, '\\N');
       out.push(`Dialogue: 0,${assStart},${assEnd},STYLE_TOP,,0,0,0,,{\\an5\\pos(${centerX},${Math.round(Y_pos_Line1)})}${t1}`);
     }
-
-    if (f.line2 && f.line2.trim() !== '') {
+    if (f.line2 && f.line2.trim()) {
       const t2 = f.line2.trim().replace(/\n/g, '\\N');
       out.push(`Dialogue: 0,${assStart},${assEnd},STYLE_BOTTOM,,0,0,0,,{\\an5\\pos(${centerX},${Math.round(Y_pos_Line2)})}${t2}`);
     }
-
     return out;
   }).join('\n');
 
@@ -157,6 +150,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 // -------------------------
 app.post('/render', async (req, res) => {
   try {
+    // Auth check
     const headerSecret = req.header('X-Render-Secret');
     const bodySecret = req.body && req.body.render_secret;
     const provided = headerSecret || bodySecret || '';
@@ -172,9 +166,9 @@ app.post('/render', async (req, res) => {
     const watermarkPath = path.join(tmpDir, `watermark-${job_id}.png`);
     const outPath = path.join(tmpDir, `out-${job_id}.mp4`);
 
-    // download video
+    // 1) Download input video
     try {
-      console.log(`Downloading ${video_url}`);
+      console.log(`Attempting to download video from: ${video_url}`);
       const writer = (await axios({ url: video_url, method: 'GET', responseType: 'stream' })).data;
       const outStream = fsSync.createWriteStream(inputPath);
       await new Promise((resolve, reject) => {
@@ -183,17 +177,19 @@ app.post('/render', async (req, res) => {
         writer.on('error', reject);
       });
     } catch (e) {
-      let msg = 'Failed to download video. Check URL/permissions.';
-      if (e.response && e.response.status === 403) msg = `Video download failed with HTTP 403 Forbidden. Ensure the video URL is publicly accessible.`;
-      console.error('Download error:', e.message || e);
-      return res.status(500).json({ status: 'error', error: msg });
+      let errorMsg = 'Failed to download video. Please check the URL and access permissions.';
+      if (e.response && e.response.status === 403) {
+        errorMsg = `Video download failed with HTTP 403 Forbidden. Ensure the video URL (${video_url}) is publicly accessible.`;
+      }
+      console.error('Download error:', errorMsg, e.message || e);
+      return res.status(500).json({ status: 'error', error: errorMsg });
     }
 
-    // detect resolution
+    // 2) Detect video resolution
     const videoResolution = await getVideoResolution(inputPath);
-    console.log('Detected resolution:', videoResolution);
+    console.log(`Video Resolution Detected: ${videoResolution.width}x${videoResolution.height}`);
 
-    // download watermark (optional)
+    // 3) Download watermark image if needed
     let watermarkInput = null;
     if (shouldAddWatermark && watermark_url) {
       try {
@@ -206,34 +202,41 @@ app.post('/render', async (req, res) => {
         });
         watermarkInput = watermarkPath;
       } catch (e) {
-        console.warn('watermark download failed; falling back to text watermark:', e.message || e);
+        console.warn('Failed to download watermark image (Non-fatal, using text watermark):', e.message || e);
       }
     }
 
-    // generate ASS using actual resolution
-    const ass = framesToAss(frames, style, videoResolution.width, videoResolution.height);
+    // 4) Create ASS subtitles (using actual resolution)
+    const ass = framesToAss(frames, style || {}, videoResolution.width, videoResolution.height);
     await fs.writeFile(assPath, ass, 'utf8');
 
-    // build ffmpeg args
+    // Watermark & ffmpeg setup
+    const WATERMARK_TEXT = "AiVideoCaptioner";
+    const WATERMARK_IMAGE_HEIGHT = 28;
+    const WATERMARK_TEXT_SIZE = 18;
+    const PADDING = 24;
+
     const assFilter = `ass=filename=${assPath}:fontsdir=/app/fonts`;
     let ffArgs;
+    let filterComplex;
+
     if (shouldAddWatermark) {
       if (watermarkInput) {
-        // watermark image overlay then ASS
-        const filter = `[0:v]scale=-1:28[wm];[1:v][wm]overlay=x=main_w-overlay_w-24:y=24[v_wm];[v_wm]${assFilter}[v]`;
-        ffArgs = ['-y', '-i', watermarkInput, '-i', inputPath, '-filter_complex', filter, '-map', '[v]', '-map', '1:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath];
+        // Input order: 0 = watermark image, 1 = video
+        filterComplex = `[0:v]scale=-1:${WATERMARK_IMAGE_HEIGHT}[wm_scaled];[1:v][wm_scaled]overlay=x=main_w-overlay_w-${PADDING}:y=${PADDING}[v_wm];[v_wm]${assFilter}[v]`;
+        ffArgs = ['-y', '-i', watermarkInput, '-i', inputPath, '-filter_complex', filterComplex, '-map', '[v]', '-map', '1:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath];
       } else {
-        // drawtext watermark then ASS
-        const textDraw = `drawtext=fontfile='Lexend-Regular.ttf':text='AiVideoCaptioner':fontsize=18:fontcolor=white@0.7:x=main_w-tw-24:y=24[v_wm]`;
-        const filter = `[0:v]${textDraw};[v_wm]${assFilter}[v]`;
-        ffArgs = ['-y', '-i', inputPath, '-filter_complex', filter, '-map', '[v]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath];
+        // fallback text watermark
+        const watermarkDrawText = `drawtext=fontfile='Lexend-Regular.ttf':text='${WATERMARK_TEXT}':fontsize=${WATERMARK_TEXT_SIZE}:fontcolor=white@0.7:x=main_w-tw-${PADDING}:y=${PADDING}[v_wm]`;
+        filterComplex = `[0:v]${watermarkDrawText};[v_wm]${assFilter}[v]`;
+        ffArgs = ['-y', '-i', inputPath, '-filter_complex', filterComplex, '-map', '[v]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath];
       }
     } else {
-      const filter = `[0:v]${assFilter}[v]`;
-      ffArgs = ['-y', '-i', inputPath, '-filter_complex', filter, '-map', '[v]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath];
+      filterComplex = `[0:v]${assFilter}[v]`;
+      ffArgs = ['-y', '-i', inputPath, '-filter_complex', filterComplex, '-map', '[v]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath];
     }
 
-    // run ffmpeg
+    // 5) Run ffmpeg
     try {
       await runFFmpeg(ffArgs);
     } catch (ffErr) {
@@ -241,7 +244,7 @@ app.post('/render', async (req, res) => {
       return res.status(500).json({ status: 'error', error: 'ffmpeg failed: ' + (ffErr.message || ffErr) });
     }
 
-    // upload
+    // 6) Upload to GCS
     const destName = `renders/${job_id}-${Date.now()}.mp4`;
     let publicUrl;
     try {
@@ -251,16 +254,23 @@ app.post('/render', async (req, res) => {
       return res.status(500).json({ status: 'error', error: 'upload failed: ' + (uerr.message || uerr) });
     }
 
-    // callback (best-effort)
+    // 7) Optional callback
     if (callback_url) {
       try {
-        await axios.post(callback_url, { render_secret: RENDER_SECRET, job_id, status: 'success', video_url: publicUrl }, { timeout: 10000 });
+        await axios.post(callback_url, {
+          render_secret: RENDER_SECRET,
+          job_id,
+          status: 'success',
+          video_url: publicUrl
+        }, { timeout: 10000 });
       } catch (e) {
         console.warn('Callback failed (non-fatal):', e.message || e);
       }
     }
 
+    // 8) Return result
     return res.json({ status: 'success', job_id, video_url: publicUrl });
+
   } catch (err) {
     console.error('Server error (catch-all):', err);
     return res.status(500).json({ status: 'error', error: err.message || String(err) });
