@@ -60,58 +60,9 @@ function secToAss(tSec) {
 
 // --- HELPER FUNCTIONS ---
 
-function findFontFile(startDir, fontName) {
-  if (!fsSync.existsSync(startDir) || !fontName) {
-    return null;
-  }
-
-  const files = fsSync.readdirSync(startDir, { withFileTypes: true });
-  for (const file of files) {
-    const fullPath = path.join(startDir, file.name);
-    if (file.isDirectory()) {
-      const found = findFontFile(fullPath, fontName);
-      if (found) return found;
-    } else if (file.isFile()) {
-      const ext = path.extname(file.name).toLowerCase();
-      if (ext === '.ttf' || ext === '.otf') {
-        const baseName = path.basename(file.name, ext);
-        if (baseName.toLowerCase().replace(/[\s-_]/g, '').includes(fontName.toLowerCase().replace(/[\s-_]/g, ''))) {
-          return fullPath;
-        }
-      }
-    }
-  }
-  return null;
-}
-
-function findFirstFontFile(startDir) {
-  if (!fsSync.existsSync(startDir)) {
-    return null;
-  }
-  const files = fsSync.readdirSync(startDir, { withFileTypes: true });
-  for (const file of files) {
-    const fullPath = path.join(startDir, file.name);
-    if (file.isDirectory()) {
-      const found = findFirstFontFile(fullPath);
-      if (found) return found;
-    } else if (file.isFile()) {
-      const ext = path.extname(file.name).toLowerCase();
-      if (ext === '.ttf' || ext === '.otf') {
-        return fullPath;
-      }
-    }
-  }
-  return null;
-}
-
-// --- FIXED: cssToAssColor ---
-// Uses a better, darker yellow (#F7B500)
 function cssToAssColor(hex, alpha = '00') {
   if (hex === 'white') hex = '#FFFFFF';
-  
-  // --- THIS LINE IS CHANGED ---
-  if (hex === 'yellow') hex = '#F7B500'; // Using a darker, video-safe yellow (was #FFFF00)
-  
+  if (hex === 'yellow') hex = '#FFFF00';
   if (hex === 'black') hex = '#000000';
 
   if (!hex || typeof hex !== 'string' || !hex.startsWith('#')) {
@@ -121,13 +72,13 @@ function cssToAssColor(hex, alpha = '00') {
   let r, g, b;
   
   if (hex.length === 7) { // #RRGGBB
-    r = hex.substring(1, 3);
-    g = hex.substring(3, 5);
-    b = hex.substring(5, 7);
+     r = hex.substring(1, 3);
+     g = hex.substring(3, 5);
+     b = hex.substring(5, 7);
   } else if (hex.length === 4) { // #RGB
-    r = hex.substring(1, 2).repeat(2);
-    g = hex.substring(2, 3).repeat(2);
-    b = hex.substring(3, 4).repeat(2);
+     r = hex.substring(1, 2).repeat(2);
+     g = hex.substring(2, 3).repeat(2);
+     b = hex.substring(3, 4).repeat(2);
   } else {
     return '&H00FFFFFF'; // Default on invalid length
   }
@@ -137,34 +88,35 @@ function cssToAssColor(hex, alpha = '00') {
 }
 
 
-// --- FIXED: framesToAss (Italics, Spacing, AND Animation) ---
+// --- MODIFIED: framesToAss with Calculated Word Timing & Tighter Line Height ---
 function framesToAss(frames, styles, playResX = 1920, playResY = 1080) {
-    
-  // Style 1 (Top Line)
+  
+  // Style 1 (Top Line: Semibold/Default)
   const font1 = (styles && styles.fontTop) || 'Lexend';
   const size1 = (styles && styles.fontSizeTop) || 80;
   const color1 = cssToAssColor(styles && styles.colorTop);
-  const weight1 = (styles && (styles.fontWeightTop === 'bold' || styles.fontWeightTop === '700')) ? '1' : '0';
-  // --- NEW: Read Italic style ---
-  const italic1 = (styles && styles.fontStyleTop === 'italic') ? '1' : '0';
+  // Semibold is typically 600, so we default to non-bold (0) unless explicitly 700
+  const weight1 = (styles && (styles.fontWeightTop === '700')) ? '1' : '0'; 
+  const italic1 = (styles && styles.isItalicTop) ? '1' : '0'; 
 
-  // Style 2 (Bottom Line)
+  // Style 2 (Bottom Line: Bold Italic 700)
   const font2 = (styles && styles.fontBottom) || 'Lexend';
   const size2 = (styles && styles.fontSizeBottom) || 80;
   const color2 = cssToAssColor(styles && styles.colorBottom);
-  const weight2 = (styles && (styles.fontWeightBottom === 'bold' || styles.fontWeightBottom === '700')) ? '1' : '0';
-  // --- NEW: Read Italic style ---
-  const italic2 = (styles && styles.fontStyleBottom === 'italic') ? '1' : '0';
+  const weight2 = (styles && (styles.fontWeightBottom === '700')) ? '1' : '0';
+  const italic2 = (styles && styles.isItalicBottom) ? '1' : '0';
   
-  const marginV_Line2 = (styles && styles.paddingBottom) || 100;
+  // --- Line Height & Padding Setup ---
+  // Padding from the bottom edge
+  const marginV_Line2 = (styles && styles.paddingBottom) || 200;
+  // Line 1 is positioned above Line 2 with a minimal vertical gap (size2 + 5)
+  // This reduces line height for a tighter look.
+  const marginV_Line1 = marginV_Line2 + size2 + 5; 
   
-  // --- CHANGED: Spacing logic to match CSS 'line-height: 1.2' ---
-  const marginV_Line1 = marginV_Line2 + Math.round(size2 * 1.2); 
-  
-  // Shadow style from your CSS
-  const shadowColor = '&H80000000'; // 50% opaque black
-  const outline = 0;
-  const shadow = 2;
+  // Clean drop shadow settings (no outline)
+  const shadowColor = '&H80000000'; // 50% opaque black shadow color
+  const outline = 0; // <-- REMOVED OUTLINE
+  const shadow = 2; // Shadow distance
   
   const header = `[Script Info]
 ScriptType: v4.00+
@@ -181,6 +133,35 @@ Style: STYLE2,${font2},${size2},${color2},&H000000FF,&H00000000,${shadowColor},$
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
   
+  // Function to generate word-by-word animated text based on average time
+  const generateAnimatedText = (lineText, startMs, endMs) => {
+    if (!lineText || lineText.trim() === '') return '';
+
+    const text = lineText.trim().split(/\s+/);
+    const totalDurationMs = endMs - startMs;
+    const wordCount = text.length;
+    
+    // Calculate average duration per word (in milliseconds)
+    const averageDurationMs = totalDurationMs / wordCount;
+    
+    // Convert average duration to ASS \k value (centi-seconds), minimum 1
+    // The \k value controls how quickly the word turns the PrimaryColour
+    const durationCs = Math.max(1, Math.round(averageDurationMs / 10)); 
+    
+    let finalAssText = '';
+    
+    for (let i = 0; i < wordCount; i++) {
+      const word = text[i];
+      
+      // Use \k for the duration of the visibility/typing effect in centiseconds. 
+      // The space is included in the \k duration for the current word.
+      finalAssText += `{\\k${durationCs}}${word}${i < wordCount - 1 ? ' ' : ''}`;
+    }
+    
+    // The animation relies on the cumulative effect of \k across the line.
+    return finalAssText;
+  };
+  
   const events = frames.flatMap(f => {
     const startSec = (f.start || 0) / 1000;
     const endSec = (f.end || (startSec + 2000)) / 1000;
@@ -189,33 +170,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     
     const lines = [];
     
-    // --- NEW ANIMATION LOGIC ---
-    // These values are taken directly from your Bubble CSS/JS
-    const staggerMs = 50;   // 50ms stagger (index * 0.05)
-    const animDurationMs = 500; // 500ms fade-in (animation: wordFadeUp 0.5s)
-
+    // Line 1: Calculated word-by-word animation
     if (f.line1 && f.line1.trim() !== '') {
-        const words = f.line1.split(/\s+/).filter(w => w.length > 0);
-        let animatedText = "";
-        words.forEach((word, index) => {
-            const startTime = index * staggerMs;
-            const endTime = startTime + animDurationMs;
-            // \alpha&HFF& = Start 100% transparent
-            // \t(start, end, \alpha&H00&) = Animate to 0% transparent (opaque) over the time
-            animatedText += `{\\alpha&HFF&\\t(${startTime}, ${endTime}, \\alpha&H00&)}${word.replace(/\n/g, '\\N')} `;
-        });
-        lines.push(`Dialogue: 0,${startAss},${endAss},STYLE1,,0,0,0,,${animatedText.trim()}`);
+      const text1 = generateAnimatedText(f.line1, f.start, f.end);
+      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE1,,0,0,0,,${text1}`);
     }
     
+    // Line 2: Calculated word-by-word animation
     if (f.line2 && f.line2.trim() !== '') {
-        const words = f.line2.split(/\s+/).filter(w => w.length > 0);
-        let animatedText = "";
-        words.forEach((word, index) => {
-            const startTime = index * staggerMs;
-            const endTime = startTime + animDurationMs;
-            animatedText += `{\\alpha&HFF&\\t(${startTime}, ${endTime}, \\alpha&H00&)}${word.replace(/\n/g, '\\N')} `;
-        });
-        lines.push(`Dialogue: 0,${startAss},${endAss},STYLE2,,0,0,0,,${animatedText.trim()}`);
+      const text2 = generateAnimatedText(f.line2, f.start, f.end);
+      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE2,,0,0,0,,${text2}`);
     }
     
     return lines;
@@ -247,7 +211,7 @@ app.post('/render', async (req, res) => {
       return res.status(401).json({ status: 'error', error: 'unauthorized' });
     }
 
-    const { job_id, reservation_id, video_url, frames, style, callback_url, plan_tier } = req.body || {};
+    const { job_id, video_url, frames, style, callback_url, logo_url } = req.body || {};
 
     if (!video_url || !frames) {
       return res.status(400).json({ status: 'error', error: 'missing fields - require video_url and frames' });
@@ -257,7 +221,7 @@ app.post('/render', async (req, res) => {
     const tmpDir = '/tmp';
     const inputPath = path.join(tmpDir, `in-${job_id}.mp4`);
     const assPath = path.join(tmpDir, `subs-${job_id}.ass`);
-    // --- REMOVED GRADIENT PATH ---
+    const logoPath = path.join(tmpDir, `logo-${job_id}.png`); 
     const outPath = path.join(tmpDir, `out-${job_id}.mp4`);
 
     // 1) Download the input video
@@ -269,60 +233,82 @@ app.post('/render', async (req, res) => {
       writer.on('error', reject);
     });
 
-    // 2) Create ASS subtitles
+    // 2) Download logo if provided
+    let logoInput = null;
+
+    if (logo_url) {
+        try {
+            const logoWriter = (await axios({ url: logo_url, method: 'GET', responseType: 'stream' })).data;
+            const logoOutStream = fsSync.createWriteStream(logoPath);
+            await new Promise((resolve, reject) => {
+                logoWriter.pipe(logoOutStream);
+                logoWriter.on('end', resolve);
+                logoWriter.on('error', reject);
+            });
+            logoInput = logoPath;
+        } catch (e) {
+            console.error('Failed to download logo:', e.message);
+            // Non-fatal: just continue without a logo
+        }
+    }
+
+    // 3) Create ASS subtitles
     const ass = framesToAss(frames, style);
     await fs.writeFile(assPath, ass, 'utf8');
 
-    // 3) --- REMOVED GRADIENT GENERATION ---
-
-    // 4) Decide watermark via drawtext (ffmpeg)
-    const addWatermark = (plan_tier === 'free' || plan_tier === 'trial');
-    const watermarkText = (style && style.watermarkText) ? style.watermarkText : 'YourBrand';
-
-    let fontFile = '';
-    try {
-        const preferredFontName = (style && style.fontTop) || 'Lexend';
-        fontFile = findFontFile('/app/fonts', preferredFontName);
-        
-        if (!fontFile) {
-            fontFile = findFirstFontFile('/app/fonts');
-        }
-    } catch (e) {
-        console.warn("Error searching for fonts:", e.message);
-        fontFile = ''; // Will default to 'Sans'
-    }
-
-    const escapedText = watermarkText.replace(/[:']/g, ""); 
-    const drawtextSnippet = addWatermark
-      ? (fontFile
-          ? `drawtext=fontfile='${fontFile}':text='${escapedText}':fontsize=28:fontcolor=white@0.7:x=main_w-tw-10:y=main_h-th-10`
-          : `drawtext=font='Sans':text='${escapedText}':fontsize=28:fontcolor=white@0.7:x=main_w-tw-10:y=main_h-th-10`)
-      : '';
-
-    // 5) Build ffmpeg filter_complex
-    // --- MODIFIED: Simplified filter_complex, removed gradient overlay ---
+    // 4) Build ffmpeg filter_complex
     let ffArgs;
     const assFilter = `ass=filename=${assPath}:fontsdir=/app/fonts`;
+    let filterComplex;
 
-    if (addWatermark) {
-      ffArgs = [
-        '-y', '-i', inputPath,
-        // No gradient input
-        '-filter_complex',
-        `[0:v]${drawtextSnippet}[tmpv];[tmpv]${assFilter}[v]`, // Chain ass filter after drawtext
-        '-map', '[v]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath
-      ];
+    const WATERMARK_TEXT = "AiVideoCaptioner";
+    const LOGO_SIZE = 36; // <-- Smaller size for top-right watermark
+    const PADDING = 32; // 32px padding for watermark
+
+    // 4a. Watermark setup: Logo or Text
+    if (logoInput) {
+        // Logo setup: scale logo and overlay it onto the main video
+        filterComplex = 
+            `[0:v]scale=w=${LOGO_SIZE}:h=${LOGO_SIZE}[logo];` + // Scale logo (Input 0)
+            // Overlay logo onto video (Input 1), positioning TOP RIGHT (y=PADDING)
+            `[1:v][logo]overlay=x=main_w-overlay_w-${PADDING}:y=${PADDING}[v_wm]`; 
+        
+        // Final Chain: [v_wm] -> ASS -> [v]
+        filterComplex += `;[v_wm]${assFilter}[v]`;
+
+        ffArgs = [
+            '-y', 
+            '-i', logoInput, // Input 0: Logo
+            '-i', inputPath, // Input 1: Video
+            '-filter_complex', filterComplex,
+            '-map', '[v]', '-map', '1:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath
+        ];
+
     } else {
-      ffArgs = [
-        '-y', '-i', inputPath,
-        // No gradient input
-        '-filter_complex',
-        `[0:v]${assFilter}[v]`, // Just apply ass filter
-        '-map', '[v]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath
-      ];
+        // Text Watermark setup (No logo provided)
+        const watermarkDrawText = 
+          `drawtext=` +
+          `fontfile='Lexend-Regular.ttf':` + 
+          `text='${WATERMARK_TEXT}':` +
+          `fontsize=24:` + // <-- Smaller size for top-right watermark
+          `fontcolor=white@0.7:` +
+          // Positioning TOP RIGHT (y=PADDING)
+          `x=main_w-tw-${PADDING}:` + 
+          `y=${PADDING}[v_wm]`; 
+
+        // Final Chain: [0:v] -> Watermark Drawtext -> ASS -> [v]
+        filterComplex = `[0:v]${watermarkDrawText};[v_wm]${assFilter}[v]`;
+        
+        ffArgs = [
+            '-y', 
+            '-i', inputPath,
+            '-filter_complex', filterComplex,
+            '-map', '[v]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath
+        ];
     }
 
-    // 6) Run ffmpeg
+
+    // 5) Run ffmpeg
     try {
       await runFFmpeg(ffArgs);
     } catch (ffErr) {
@@ -330,7 +316,7 @@ app.post('/render', async (req, res) => {
       return res.status(500).json({ status: 'error', error: 'ffmpeg failed: ' + ffErr.message });
     }
 
-    // 7) Upload result to GCS
+    // 6) Upload result to GCS
     const destName = `renders/${job_id}-${Date.now()}.mp4`;
     let publicUrl;
     try {
@@ -340,12 +326,11 @@ app.post('/render', async (req, res) => {
       return res.status(500).json({ status: 'error', error: 'upload failed: ' + uerr.message });
     }
 
-    // 8) Optional callback to Bubble
+    // 7) Optional callback to Bubble
     if (callback_url) {
       try {
         await axios.post(callback_url, {
-          render__secret: RENDER_SECRET,
-          reservation_id,
+          render_secret: RENDER_SECRET,
           job_id,
           status: 'success',
           video_url: publicUrl
@@ -355,7 +340,7 @@ app.post('/render', async (req, res) => {
       }
     }
 
-    // 9) Respond
+    // 8) Respond
     return res.json({ status: 'success', job_id, video_url: publicUrl });
 
   } catch (err) {
