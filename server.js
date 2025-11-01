@@ -87,8 +87,7 @@ function cssToAssColor(hex) {
 }
 
 
-// ⭐ CRITICAL FIX: Switched to Alignment 8 (Bottom Left) + Manual Centering
-// This prevents libass from swapping line order when a line wraps.
+// ⭐ Initialization Fix: Renamed loop variables to prevent scope error.
 function framesToAss(frames, styles, playResX = 1920, playResY = 1080) {
   
   // Style 1 (TOP Line in final video)
@@ -109,17 +108,16 @@ function framesToAss(frames, styles, playResX = 1920, playResY = 1080) {
   const marginV_Line2 = (styles && styles.paddingBottom) || 200;
   
   // MarginV for Line 1 (TOP LINE)
-  // MUST be LARGER than Line 2's MarginV to be positioned HIGHER on the screen.
   const VERTICAL_GAP = 15; 
   const marginV_Line1 = marginV_Line2 + size2 + VERTICAL_GAP;  
   
-  // Clean drop shadow settings (no outline)
+  // Setup for consistent shadows/outlines
   const shadowColor = '&H80000000'; 
   const outline = 0;  
   const shadow = 2; 
   
   // ALIGNMENT 8 (Bottom Left) is used in the style to ensure consistent vertical stacking (wraps upwards).
-  // MarginL is set to a large value (e.g., 960 for 1920px) to push the text block to the center.
+  // MarginL is set to half the screen width to push the text block to the center.
   const CENTER_ALIGNMENT_MODE = 8;
   const CENTER_MARGIN_L = Math.floor(playResX / 2); // Set MarginL to half the screen width for centering
 
@@ -145,26 +143,26 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   };
   
   const events = frames.flatMap(f => {
-    const startSec = (f.start || 0) / 1000;
-    const endSec = (f.end || (startSec + 2000)) / 1000;
-    const startAss = secToAss(startSec);
-    const endAss = secToAss(endAss);
+    const frameStartSec = (f.start || 0) / 1000;
+    const frameEndSec = (f.end || (frameStartSec + 2000)) / 1000;
+    
+    // ⭐ Renamed to avoid scope/initialization issues
+    const assStart = secToAss(frameStartSec);
+    const assEnd = secToAss(frameEndSec);
     
     const lines = [];
     
     // Line 1 (TOP) -> Uses STYLE1 (Higher MarginV)
     if (f.line1 && f.line1.trim() !== '') {
       const text1 = getPlainText(f.line1);
-      // We force center alignment for the text block itself using {\a2} which overrides the style's 
-      // Alignment 8, but because we set a massive MarginL, it still centers correctly 
-      // AND handles the vertical stacking properly.
-      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE1,,0,0,0,,{\a2}${text1}`);
+      // {\a2} forces horizontal centering of the text block contents
+      lines.push(`Dialogue: 0,${assStart},${assEnd},STYLE1,,0,0,0,,{\a2}${text1}`);
     }
     
     // Line 2 (BOTTOM) -> Uses STYLE2 (Lower MarginV)
     if (f.line2 && f.line2.trim() !== '') {
       const text2 = getPlainText(f.line2);
-      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE2,,0,0,0,,{\a2}${text2}`);
+      lines.push(`Dialogue: 0,${assStart},${assEnd},STYLE2,,0,0,0,,{\a2}${text2}`);
     }
     
     return lines;
@@ -174,6 +172,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 }
 
 async function getVideoResolution(inputPath) {
+  // (Function retained for robustness, though not currently used for ASS PlayRes)
   try {
     const out = execSync(`ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "${inputPath}"`).toString().trim();
     const [w, h] = out.split(',');
@@ -214,6 +213,7 @@ app.post('/render', async (req, res) => {
 
     // 1) Download the input video
     try {
+        console.log(`Attempting to download video from: ${video_url}`);
         const writer = (await axios({ url: video_url, method: 'GET', responseType: 'stream' })).data;
         const outStream = fsSync.createWriteStream(inputPath);
         await new Promise((resolve, reject) => {
@@ -222,8 +222,12 @@ app.post('/render', async (req, res) => {
           writer.on('error', reject);
         });
     } catch (e) {
-        console.error('Failed to download video:', e.message);
-        return res.status(500).json({ status: 'error', error: 'Request failed with status code 403 or other download error for input video.' });
+        let errorMsg = 'Failed to download video. Please check the URL and access permissions.';
+        if (e.response && e.response.status === 403) {
+             errorMsg = `Video download failed with HTTP 403 Forbidden. Ensure the video URL (${video_url}) is publicly accessible.`;
+        }
+        console.error('Download error:', errorMsg, e.message);
+        return res.status(500).json({ status: 'error', error: errorMsg });
     }
 
 
@@ -350,7 +354,7 @@ app.post('/render', async (req, res) => {
     return res.json({ status: 'success', job_id, video_url: publicUrl });
 
   } catch (err) {
-    console.error('Server error:', err);
+    console.error('Server error (catch-all):', err);
     return res.status(500).json({ status: 'error', error: err.message || String(err) });
   }
 });
