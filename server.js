@@ -1,4 +1,3 @@
-
 // server.js
 const express = require('express');
 const axios = require('axios');
@@ -73,13 +72,13 @@ function cssToAssColor(hex) {
   let r, g, b;
   
   if (hex.length === 7) { // #RRGGBB
-     r = hex.substring(1, 3);
-     g = hex.substring(3, 5);
-     b = hex.substring(5, 7);
+    r = hex.substring(1, 3);
+    g = hex.substring(3, 5);
+    b = hex.substring(5, 7);
   } else if (hex.length === 4) { // #RGB
-     r = hex.substring(1, 2).repeat(2);
-     g = hex.substring(2, 3).repeat(2);
-     b = hex.substring(3, 4).repeat(2);
+    r = hex.substring(1, 2).repeat(2);
+    g = hex.substring(2, 3).repeat(2);
+    b = hex.substring(3, 4).repeat(2);
   } else {
     return '&H00FFFFFF'; // Default on invalid length
   }
@@ -89,39 +88,40 @@ function cssToAssColor(hex) {
 }
 
 
-// --- MODIFIED: framesToAss with NO Animation, Fixed Alignment, and Tighter Line Height (Negative Offset) ---
+// --- FIXED: framesToAss with Line Swap Fix ---
 function framesToAss(frames, styles, playResX = 1920, playResY = 1080) {
   
-  // Style 1 (Top Line: Semibold/Default)
+  // Style 1 (Top Line: Semibold/Default) -> Will use the HIGHER MarginV
   const font1 = (styles && styles.fontTop) || 'Lexend';
   const size1 = (styles && styles.fontSizeTop) || 80;
-  const color1Primary = cssToAssColor(styles && styles.colorTop); 
+  const color1Primary = cssToAssColor(styles && styles.colorTop);  
   const color1Secondary = cssToAssColor(styles && styles.colorBottom);
   
-  const weight1 = (styles && (styles.fontWeightTop === '700')) ? '1' : '0'; 
-  const italic1 = (styles && styles.isItalicTop) ? '1' : '0'; 
+  const weight1 = (styles && (styles.fontWeightTop === '700')) ? '1' : '0';  
+  const italic1 = (styles && styles.isItalicTop) ? '1' : '0';  
 
-  // Style 2 (Bottom Line: Bold Italic 700)
+  // Style 2 (Bottom Line: Bold Italic 700) -> Will use the LOWER MarginV
   const font2 = (styles && styles.fontBottom) || 'Lexend';
   const size2 = (styles && styles.fontSizeBottom) || 80;
-  const color2Primary = cssToAssColor(styles && styles.colorBottom); 
+  const color2Primary = cssToAssColor(styles && styles.colorBottom);  
   const color2Secondary = cssToAssColor(styles && styles.colorTop);
   
   const weight2 = (styles && (styles.fontWeightBottom === '700')) ? '1' : '0';
   const italic2 = (styles && styles.isItalicBottom) ? '1' : '0';
   
   // --- Line Height & Padding Setup (FIXED) ---
-  // Padding from the bottom edge
+  // Padding from the bottom edge for the BOTTOM LINE
   const marginV_Line2 = (styles && styles.paddingBottom) || 200;
   
   // To reduce line height, we introduce a negative offset (overlap).
   // Line 1 is positioned above Line 2 with an effective 5px overlap for safer tight spacing.
   const LINE_OVERLAP = 5; // Reduced overlap for stability
-  const marginV_Line1 = marginV_Line2 + size2 - LINE_OVERLAP; 
+  // Margin V for the TOP LINE: Margin of Bottom Line + Size of Bottom Line - Overlap
+  const marginV_Line1 = marginV_Line2 + size2 - LINE_OVERLAP;  
   
   // Clean drop shadow settings (no outline)
   const shadowColor = '&H80000000'; // 50% opaque black shadow color
-  const outline = 0; 
+  const outline = 0;  
   const shadow = 2; // Shadow distance
   
   const header = `[Script Info]
@@ -152,18 +152,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     
     const lines = [];
     
-    // Line 1: Plain text (User expects this on TOP)
-    // FIX: Using STYLE2 (which has the LOW margin) to compensate for the reported visual swap bug.
+    // Line 1: Expected TOP. Must use STYLE1 (Higher MarginV)
     if (f.line1 && f.line1.trim() !== '') {
       const text1 = getPlainText(f.line1);
-      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE2,,0,0,0,,${text1}`);
+      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE1,,0,0,0,,${text1}`);
     }
     
-    // Line 2: Plain text (User expects this on BOTTOM)
-    // FIX: Using STYLE1 (which has the HIGH margin) to compensate for the reported visual swap bug.
+    // Line 2: Expected BOTTOM. Must use STYLE2 (Lower MarginV)
     if (f.line2 && f.line2.trim() !== '') {
       const text2 = getPlainText(f.line2);
-      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE1,,0,0,0,,${text2}`);
+      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE2,,0,0,0,,${text2}`);
     }
     
     return lines;
@@ -195,17 +193,23 @@ app.post('/render', async (req, res) => {
       return res.status(401).json({ status: 'error', error: 'unauthorized' });
     }
 
-    const { job_id, video_url, frames, style, callback_url, logo_url } = req.body || {};
+    // ⭐ MODIFIED: Destructure plan_tier flag
+    const { job_id, video_url, frames, style, callback_url, watermark_url, plan_tier } = req.body || {};
 
     if (!video_url || !frames) {
       return res.status(400).json({ status: 'error', error: 'missing fields - require video_url and frames' });
     }
 
+    // ⭐ MODIFIED: Determine if watermark should be applied
+    // Watermark is applied ONLY if plan_tier is exactly "free"
+    const shouldAddWatermark = plan_tier === "free";
+
+
     // file paths
     const tmpDir = '/tmp';
     const inputPath = path.join(tmpDir, `in-${job_id}.mp4`);
     const assPath = path.join(tmpDir, `subs-${job_id}.ass`);
-    const logoPath = path.join(tmpDir, `logo-${job_id}.png`); 
+    const watermarkPath = path.join(tmpDir, `watermark-${job_id}.png`); 
     const outPath = path.join(tmpDir, `out-${job_id}.mp4`);
 
     // 1) Download the input video
@@ -217,21 +221,20 @@ app.post('/render', async (req, res) => {
       writer.on('error', reject);
     });
 
-    // 2) Download logo if provided
-    let logoInput = null;
-
-    if (logo_url) {
+    // 2) Download watermark image if needed
+    let watermarkInput = null;
+    if (shouldAddWatermark && watermark_url) {
         try {
-            const logoWriter = (await axios({ url: logo_url, method: 'GET', responseType: 'stream' })).data;
-            const logoOutStream = fsSync.createWriteStream(logoPath);
+            const logoWriter = (await axios({ url: watermark_url, method: 'GET', responseType: 'stream' })).data;
+            const logoOutStream = fsSync.createWriteStream(watermarkPath);
             await new Promise((resolve, reject) => {
                 logoWriter.pipe(logoOutStream);
                 logoWriter.on('end', resolve);
                 logoWriter.on('error', reject);
             });
-            logoInput = logoPath;
+            watermarkInput = watermarkPath;
         } catch (e) {
-            console.error('Failed to download logo:', e.message);
+            console.error('Failed to download watermark image:', e.message);
             // Non-fatal: just continue without a logo
         }
     }
@@ -240,52 +243,67 @@ app.post('/render', async (req, res) => {
     const ass = framesToAss(frames, style);
     await fs.writeFile(assPath, ass, 'utf8');
 
+    // --- WATERMARK CONSTANTS (Only used if shouldAddWatermark is true) ---
+    const WATERMARK_TEXT = "AiVideoCaptioner";
+    const WATERMARK_IMAGE_SIZE = 24; 
+    const WATERMARK_TEXT_SIZE = 18; 
+    const PADDING = 24; 
+
     // 4) Build ffmpeg filter_complex
     let ffArgs;
     const assFilter = `ass=filename=${assPath}:fontsdir=/app/fonts`;
     let filterComplex;
 
-    const WATERMARK_TEXT = "AiVideoCaptioner";
-    const LOGO_SIZE = 24; // <-- NEW: Reduced logo size
-    const PADDING = 32; // 32px padding for watermark
+    if (shouldAddWatermark) {
+        // 4a. Watermark setup: Image or Text
+        if (watermarkInput) {
+            // Image Watermark setup
+            // [0:v] is the watermark image input, [1:v] is the main video input
+            filterComplex = 
+                `[0:v]scale=w=${WATERMARK_IMAGE_SIZE}:h=${WATERMARK_IMAGE_SIZE}[wm_scaled];` + 
+                `[1:v][wm_scaled]overlay=x=main_w-overlay_w-${PADDING}:y=${PADDING}[v_wm];`; 
+            
+            // Final Chain: [v_wm] -> ASS -> [v]
+            filterComplex += `[v_wm]${assFilter}[v]`;
 
-    // 4a. Watermark setup: Logo or Text
-    if (logoInput) {
-        // Logo setup: scale logo and overlay it onto the main video
-        filterComplex = 
-            `[0:v]scale=w=${LOGO_SIZE}:h=${LOGO_SIZE}[logo];` + // Scale logo (Input 0)
-            // Overlay logo onto video (Input 1), positioning TOP RIGHT (y=PADDING)
-            `[1:v][logo]overlay=x=main_w-overlay_w-${PADDING}:y=${PADDING}[v_wm]`; 
-        
-        // Final Chain: [v_wm] -> ASS -> [v]
-        filterComplex += `;[v_wm]${assFilter}[v]`;
+            ffArgs = [
+                '-y', 
+                '-i', watermarkInput, // Input 0: Watermark Image
+                '-i', inputPath, // Input 1: Video
+                '-filter_complex', filterComplex,
+                '-map', '[v]', '-map', '1:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath
+            ];
 
-        ffArgs = [
-            '-y', 
-            '-i', logoInput, // Input 0: Logo
-            '-i', inputPath, // Input 1: Video
-            '-filter_complex', filterComplex,
-            '-map', '[v]', '-map', '1:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath
-        ];
+        } else {
+            // Text Watermark setup 
+            // [0:v] is the main video input
+            const watermarkDrawText = 
+              `drawtext=` +
+              `fontfile='Lexend-Regular.ttf':` + 
+              `text='${WATERMARK_TEXT}':` +
+              `fontsize=${WATERMARK_TEXT_SIZE}:` + 
+              `fontcolor=white@0.7:` +
+              `x=main_w-tw-${PADDING}:` + 
+              `y=${PADDING}[v_wm]`; 
 
+            // Final Chain: [0:v] -> Watermark Drawtext -> ASS -> [v]
+            filterComplex = `[0:v]${watermarkDrawText};[v_wm]${assFilter}[v]`;
+            
+            ffArgs = [
+                '-y', 
+                '-i', inputPath, // Input 0: Video
+                '-filter_complex', filterComplex,
+                '-map', '[v]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath
+            ];
+        }
     } else {
-        // Text Watermark setup (No logo provided)
-        const watermarkDrawText = 
-          `drawtext=` +
-          `fontfile='Lexend-Regular.ttf':` + 
-          `text='${WATERMARK_TEXT}':` +
-          `fontsize=24:` + // <-- Watermark text size
-          `fontcolor=white@0.7:` +
-          // Positioning TOP RIGHT (y=PADDING)
-          `x=main_w-tw-${PADDING}:` + 
-          `y=${PADDING}[v_wm]`; 
+        // ⭐ NO Watermark (Paid Tier: "creator", "top_up", or undefined/null)
+        // Only ASS subtitle filter is applied to the video input [0:v]
+        filterComplex = `[0:v]${assFilter}[v]`;
 
-        // Final Chain: [0:v] -> Watermark Drawtext -> ASS -> [v]
-        filterComplex = `[0:v]${watermarkDrawText};[v_wm]${assFilter}[v]`;
-        
         ffArgs = [
             '-y', 
-            '-i', inputPath,
+            '-i', inputPath, // Input 0: Video
             '-filter_complex', filterComplex,
             '-map', '[v]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath
         ];
