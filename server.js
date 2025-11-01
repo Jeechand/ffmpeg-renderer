@@ -1,3 +1,4 @@
+
 // server.js
 const express = require('express');
 const axios = require('axios');
@@ -88,38 +89,35 @@ function cssToAssColor(hex) {
 }
 
 
-// --- MODIFIED: framesToAss with NO Animation, Fixed Alignment, and Tighter Line Height (using \linesp and compensatory swap) ---
+// --- MODIFIED: framesToAss with NO Animation, Fixed Alignment, and Tighter Line Height (Negative Offset) ---
 function framesToAss(frames, styles, playResX = 1920, playResY = 1080) {
   
-  // Style 1 (Used for Visual BOTTOM Line Content due to compensation)
+  // Style 1 (Top Line: Semibold/Default)
   const font1 = (styles && styles.fontTop) || 'Lexend';
   const size1 = (styles && styles.fontSizeTop) || 80;
   const color1Primary = cssToAssColor(styles && styles.colorTop); 
+  const color1Secondary = cssToAssColor(styles && styles.colorBottom);
   
   const weight1 = (styles && (styles.fontWeightTop === '700')) ? '1' : '0'; 
   const italic1 = (styles && styles.isItalicTop) ? '1' : '0'; 
 
-  // Style 2 (Used for Visual TOP Line Content due to compensation)
+  // Style 2 (Bottom Line: Bold Italic 700)
   const font2 = (styles && styles.fontBottom) || 'Lexend';
   const size2 = (styles && styles.fontSizeBottom) || 80;
   const color2Primary = cssToAssColor(styles && styles.colorBottom); 
+  const color2Secondary = cssToAssColor(styles && styles.colorTop);
   
   const weight2 = (styles && (styles.fontWeightBottom === '700')) ? '1' : '0';
   const italic2 = (styles && styles.isItalicBottom) ? '1' : '0';
   
-  // --- Line Height & Padding Setup (using \linesp) ---
-  const marginV_Line2 = (styles && styles.paddingBottom) || 200; // BASE margin for the visual TOP line (assigned to STYLE2)
+  // --- Line Height & Padding Setup (FIXED) ---
+  // Padding from the bottom edge
+  const marginV_Line2 = (styles && styles.paddingBottom) || 200;
   
-  // Calculate vertical offset for the visual BOTTOM line (assigned to STYLE1)
-  const avgFontSize = (size1 + size2) / 2;
-  // Reduced to 0.9 to create a tighter, slightly overlapping vertical distance
-  const idealVerticalOffset = avgFontSize * 0.9; 
-  
-  // STYLE1 must have the higher MarginV value to be rendered lower (at the bottom of the screen)
-  const marginV_Line1 = marginV_Line2 + idealVerticalOffset; 
-  
-  // ASS \linesp override for tight spacing between lines *if* a single line wraps or uses \N
-  const lineSpacing = '-0.5'; 
+  // To reduce line height, we introduce a negative offset (overlap).
+  // Line 1 is positioned above Line 2 with an effective 5px overlap for safer tight spacing.
+  const LINE_OVERLAP = 5; // Reduced overlap for stability
+  const marginV_Line1 = marginV_Line2 + size2 - LINE_OVERLAP; 
   
   // Clean drop shadow settings (no outline)
   const shadowColor = '&H80000000'; // 50% opaque black shadow color
@@ -134,15 +132,15 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: STYLE1,${font1},${size1},${color1Primary},&H00000000,&H00000000,${shadowColor},${weight1},${italic1},0,0,100,100,${lineSpacing},0,1,${outline},${shadow},2,20,20,${marginV_Line1},1
-Style: STYLE2,${font2},${size2},${color2Primary},&H00000000,&H00000000,${shadowColor},${weight2},${italic2},0,0,100,100,${lineSpacing},0,1,${outline},${shadow},2,20,20,${marginV_Line2},1
+Style: STYLE1,${font1},${size1},${color1Primary},${color1Secondary},&H00000000,${shadowColor},${weight1},${italic1},0,0,100,100,0,0,1,${outline},${shadow},2,20,20,${marginV_Line1},1
+Style: STYLE2,${font2},${size2},${color2Primary},${color2Secondary},&H00000000,${shadowColor},${weight2},${italic2},0,0,100,100,0,0,1,${outline},${shadow},2,20,20,${marginV_Line2},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
   
+  // Function to return plain text (NO ANIMATION)
   const getPlainText = (lineText) => {
-    // The text content should be clean for ASS
     return lineText ? lineText.trim() : '';
   };
   
@@ -150,17 +148,19 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     const startSec = (f.start || 0) / 1000;
     const endSec = (f.end || (startSec + 2000)) / 1000;
     const startAss = secToAss(startSec);
-    const endAss = secToAss(endAss);
+    const endAss = secToAss(endSec);
     
     const lines = [];
     
-    // Line 1: (Visual TOP line content) -> Assigned STYLE2 (Lower MarginV) -> CORRECT ALIGNMENT DUE TO COMPENSATORY SWAP
+    // Line 1: Plain text (User expects this on TOP)
+    // FIX: Using STYLE2 (which has the LOW margin) to compensate for the reported visual swap bug.
     if (f.line1 && f.line1.trim() !== '') {
       const text1 = getPlainText(f.line1);
       lines.push(`Dialogue: 0,${startAss},${endAss},STYLE2,,0,0,0,,${text1}`);
     }
     
-    // Line 2: (Visual BOTTOM line content) -> Assigned STYLE1 (Higher MarginV) -> CORRECT ALIGNMENT DUE TO COMPENSATORY SWAP
+    // Line 2: Plain text (User expects this on BOTTOM)
+    // FIX: Using STYLE1 (which has the HIGH margin) to compensate for the reported visual swap bug.
     if (f.line2 && f.line2.trim() !== '') {
       const text2 = getPlainText(f.line2);
       lines.push(`Dialogue: 0,${startAss},${endAss},STYLE1,,0,0,0,,${text2}`);
@@ -246,8 +246,7 @@ app.post('/render', async (req, res) => {
     let filterComplex;
 
     const WATERMARK_TEXT = "AiVideoCaptioner";
-    const LOGO_SIZE = 18; // <-- FURTHER REDUCED Logo size
-    const TEXT_WATERMARK_FONT_SIZE = 18; // <-- FURTHER REDUCED Text watermark font size
+    const LOGO_SIZE = 24; // <-- NEW: Reduced logo size
     const PADDING = 32; // 32px padding for watermark
 
     // 4a. Watermark setup: Logo or Text
@@ -275,7 +274,7 @@ app.post('/render', async (req, res) => {
           `drawtext=` +
           `fontfile='Lexend-Regular.ttf':` + 
           `text='${WATERMARK_TEXT}':` +
-          `fontsize=${TEXT_WATERMARK_FONT_SIZE}:` + // <-- Watermark text size
+          `fontsize=24:` + // <-- Watermark text size
           `fontcolor=white@0.7:` +
           // Positioning TOP RIGHT (y=PADDING)
           `x=main_w-tw-${PADDING}:` + 
