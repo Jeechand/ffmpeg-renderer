@@ -8,7 +8,7 @@ const { Storage } = require('@google-cloud/storage');
 const path = require('path');
 
 const app = express();
-app.use(express.json({ limit: '200mb' })); // allow large payloads if needed
+app.use(express.json({ limit: '200mb' })); 
 
 const storage = new Storage();
 const BUCKET = process.env.BUCKET_NAME || '';
@@ -88,36 +88,42 @@ function cssToAssColor(hex) {
 }
 
 
-// --- FIXED: framesToAss with Line Swap Fix ---
+// ⭐ MODIFIED: Corrected Line Swap Logic in framesToAss
 function framesToAss(frames, styles, playResX = 1920, playResY = 1080) {
   
-  // Style 1 (Top Line: Semibold/Default) -> Will use the HIGHER MarginV
+  // Style 1 (TOP Line)
   const font1 = (styles && styles.fontTop) || 'Lexend';
   const size1 = (styles && styles.fontSizeTop) || 80;
   const color1Primary = cssToAssColor(styles && styles.colorTop);  
   const color1Secondary = cssToAssColor(styles && styles.colorBottom);
-  
   const weight1 = (styles && (styles.fontWeightTop === '700')) ? '1' : '0';  
   const italic1 = (styles && styles.isItalicTop) ? '1' : '0';  
 
-  // Style 2 (Bottom Line: Bold Italic 700) -> Will use the LOWER MarginV
+  // Style 2 (BOTTOM Line)
   const font2 = (styles && styles.fontBottom) || 'Lexend';
   const size2 = (styles && styles.fontSizeBottom) || 80;
   const color2Primary = cssToAssColor(styles && styles.colorBottom);  
   const color2Secondary = cssToAssColor(styles && styles.colorTop);
-  
   const weight2 = (styles && (styles.fontWeightBottom === '700')) ? '1' : '0';
   const italic2 = (styles && styles.isItalicBottom) ? '1' : '0';
   
-  // --- Line Height & Padding Setup (FIXED) ---
-  // Padding from the bottom edge for the BOTTOM LINE
+  // Padding from the bottom edge for the BOTTOM LINE (Line 2)
   const marginV_Line2 = (styles && styles.paddingBottom) || 200;
   
-  // To reduce line height, we introduce a negative offset (overlap).
-  // Line 1 is positioned above Line 2 with an effective 5px overlap for safer tight spacing.
-  const LINE_OVERLAP = 5; // Reduced overlap for stability
-  // Margin V for the TOP LINE: Margin of Bottom Line + Size of Bottom Line - Overlap
-  const marginV_Line1 = marginV_Line2 + size2 - LINE_OVERLAP;  
+  // To place Line 1 (Top Line) correctly ABOVE Line 2 (Bottom Line), 
+  // we calculate its MarginV based on Line 2's position and font size.
+  // Using Alignment 2 (Bottom Center) and a lower MarginV means the line is higher up.
+  
+  // NEW LOGIC: Calculate Line 1 MarginV based on Line 2's size and desired overlap/gap.
+  // MarginV_Line1 must be greater than MarginV_Line2 to appear lower on screen.
+  // But wait, the previous logic was using alignment '2' which is bottom center.
+  // Let's use Alignment '2' (Bottom Center) for both, and adjust MarginV:
+  
+  // Line 2 (BOTTOM): Uses the user-defined padding.
+  // Line 1 (TOP): Needs to be positioned above Line 2. 
+  // MarginV for Line 1 = MarginV_Line2 + size2 + (vertical gap)
+  const VERTICAL_GAP = 5; // A small gap between the two lines
+  const marginV_Line1 = marginV_Line2 + size2 + VERTICAL_GAP;  
   
   // Clean drop shadow settings (no outline)
   const shadowColor = '&H80000000'; // 50% opaque black shadow color
@@ -132,8 +138,8 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: STYLE1,${font1},${size1},${color1Primary},${color1Secondary},&H00000000,${shadowColor},${weight1},${italic1},0,0,100,100,0,0,1,${outline},${shadow},2,20,20,${marginV_Line1},1
 Style: STYLE2,${font2},${size2},${color2Primary},${color2Secondary},&H00000000,${shadowColor},${weight2},${italic2},0,0,100,100,0,0,1,${outline},${shadow},2,20,20,${marginV_Line2},1
+Style: STYLE1,${font1},${size1},${color1Primary},${color1Secondary},&H00000000,${shadowColor},${weight1},${italic1},0,0,100,100,0,0,1,${outline},${shadow},2,20,20,${marginV_Line1},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -152,13 +158,20 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     
     const lines = [];
     
-    // Line 1: Expected TOP. Must use STYLE1 (Higher MarginV)
+    // Line 1: Expected TOP line in final video (higher marginV -> positioned lower)
+    // The previous logic for marginV was backwards. 
+    // MarginV = Distance from the BOTTOM edge. Higher MarginV = Line moves UP.
+    // To fix the swap, we must assign the style with the LARGER MarginV (STYLE1) 
+    // to the line that should appear on TOP (Line 1). 
+    // And the style with the SMALLER MarginV (STYLE2) to the line that should appear on the BOTTOM (Line 2). 
+    
+    // Line 1 (TOP) -> Use STYLE1 (larger MarginV)
     if (f.line1 && f.line1.trim() !== '') {
       const text1 = getPlainText(f.line1);
       lines.push(`Dialogue: 0,${startAss},${endAss},STYLE1,,0,0,0,,${text1}`);
     }
     
-    // Line 2: Expected BOTTOM. Must use STYLE2 (Lower MarginV)
+    // Line 2 (BOTTOM) -> Use STYLE2 (smaller MarginV)
     if (f.line2 && f.line2.trim() !== '') {
       const text2 = getPlainText(f.line2);
       lines.push(`Dialogue: 0,${startAss},${endAss},STYLE2,,0,0,0,,${text2}`);
@@ -184,6 +197,7 @@ async function getVideoResolution(inputPath) {
 // Main /render endpoint
 // -------------------------
 app.post('/render', async (req, res) => {
+  // ... (Authorization and basic checks remain unchanged)
   try {
     // Auth check
     const headerSecret = req.header('X-Render-Secret');
@@ -193,17 +207,13 @@ app.post('/render', async (req, res) => {
       return res.status(401).json({ status: 'error', error: 'unauthorized' });
     }
 
-    // ⭐ MODIFIED: Destructure plan_tier flag
     const { job_id, video_url, frames, style, callback_url, watermark_url, plan_tier } = req.body || {};
 
     if (!video_url || !frames) {
       return res.status(400).json({ status: 'error', error: 'missing fields - require video_url and frames' });
     }
 
-    // ⭐ MODIFIED: Determine if watermark should be applied
-    // Watermark is applied ONLY if plan_tier is exactly "free"
     const shouldAddWatermark = plan_tier === "free";
-
 
     // file paths
     const tmpDir = '/tmp';
@@ -213,6 +223,7 @@ app.post('/render', async (req, res) => {
     const outPath = path.join(tmpDir, `out-${job_id}.mp4`);
 
     // 1) Download the input video
+    // ... (Video download logic remains unchanged)
     const writer = (await axios({ url: video_url, method: 'GET', responseType: 'stream' })).data;
     const outStream = fsSync.createWriteStream(inputPath);
     await new Promise((resolve, reject) => {
@@ -245,7 +256,7 @@ app.post('/render', async (req, res) => {
 
     // --- WATERMARK CONSTANTS (Only used if shouldAddWatermark is true) ---
     const WATERMARK_TEXT = "AiVideoCaptioner";
-    const WATERMARK_IMAGE_SIZE = 24; 
+    const WATERMARK_IMAGE_HEIGHT = 48; // Set a fixed height for the watermark
     const WATERMARK_TEXT_SIZE = 18; 
     const PADDING = 24; 
 
@@ -257,10 +268,12 @@ app.post('/render', async (req, res) => {
     if (shouldAddWatermark) {
         // 4a. Watermark setup: Image or Text
         if (watermarkInput) {
-            // Image Watermark setup
+            // ⭐ MODIFIED: Image Watermark setup with aspect ratio scaling
             // [0:v] is the watermark image input, [1:v] is the main video input
+            // scale='-1:H' scales to the specified height (48px) and calculates width (-1) 
+            // to maintain aspect ratio, preventing distortion.
             filterComplex = 
-                `[0:v]scale=w=${WATERMARK_IMAGE_SIZE}:h=${WATERMARK_IMAGE_SIZE}[wm_scaled];` + 
+                `[0:v]scale=-1:${WATERMARK_IMAGE_HEIGHT}[wm_scaled];` + 
                 `[1:v][wm_scaled]overlay=x=main_w-overlay_w-${PADDING}:y=${PADDING}[v_wm];`; 
             
             // Final Chain: [v_wm] -> ASS -> [v]
@@ -276,7 +289,7 @@ app.post('/render', async (req, res) => {
 
         } else {
             // Text Watermark setup 
-            // [0:v] is the main video input
+            // ... (Text watermark logic remains unchanged)
             const watermarkDrawText = 
               `drawtext=` +
               `fontfile='Lexend-Regular.ttf':` + 
@@ -297,8 +310,8 @@ app.post('/render', async (req, res) => {
             ];
         }
     } else {
-        // ⭐ NO Watermark (Paid Tier: "creator", "top_up", or undefined/null)
-        // Only ASS subtitle filter is applied to the video input [0:v]
+        // NO Watermark (Paid Tier)
+        // ... (No watermark logic remains unchanged)
         filterComplex = `[0:v]${assFilter}[v]`;
 
         ffArgs = [
@@ -311,6 +324,7 @@ app.post('/render', async (req, res) => {
 
 
     // 5) Run ffmpeg
+    // ... (FFmpeg execution, GCS upload, and callback remain unchanged)
     try {
       await runFFmpeg(ffArgs);
     } catch (ffErr) {
