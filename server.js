@@ -19,12 +19,10 @@ const RENDER_SECRET = process.env.RENDER_SECRET || 'change_me';
 // Utility functions
 // -------------------------
 function runCommandSync(cmd) {
-  // Utility for quick synchronous command execution (used for ffprobe)
   execSync(cmd, { stdio: 'inherit' });
 }
 
 function runFFmpeg(args) {
-  // Promisified execution of ffmpeg command
   return new Promise((resolve, reject) => {
     const ff = spawn('ffmpeg', args, { stdio: 'inherit' });
     ff.on('close', code => {
@@ -37,12 +35,10 @@ function runFFmpeg(args) {
 async function uploadToGCS(localPath, destName) {
   if (!BUCKET) throw new Error('BUCKET_NAME not set in env');
   const bucket = storage.bucket(BUCKET);
-  // Upload file
   await bucket.upload(localPath, { destination: destName });
 
   const file = bucket.file(destName);
 
-  // Create a signed URL valid for 7 days (max allowed by GCS)
   const expiresDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); 
   const [signedUrl] = await file.getSignedUrl({
     version: 'v4',
@@ -54,7 +50,6 @@ async function uploadToGCS(localPath, destName) {
 }
 
 function secToAss(tSec) {
-  // Converts seconds (float) to ASS timestamp format H:MM:SS.cc
   const h = Math.floor(tSec / 3600);
   const m = Math.floor((tSec % 3600) / 60);
   const s = Math.floor(tSec % 60);
@@ -63,9 +58,8 @@ function secToAss(tSec) {
 }
 
 function cssToAssColor(hex) {
-  // Converts CSS hex color (#RRGGBB) to ASS color format (&HBBGGRR)
   if (!hex || typeof hex !== 'string' || !hex.startsWith('#')) {
-    return '&H00FFFFFF'; // Default to Opaque White
+    return '&H00FFFFFF'; 
   }
   
   let r, g, b;
@@ -82,64 +76,64 @@ function cssToAssColor(hex) {
     return '&H00FFFFFF';
   }
 
-  // ASS format is &H + Alpha (00 for Opaque) + Blue + Green + Red
   return `&H00${b}${g}${r}`.toUpperCase();
 }
 
 
-// ⭐ ROBUST LOGIC REVERTED to \pos, adding \clip to prevent wrapping collision
+// ⭐ FINAL TUNED LOGIC: Precise \pos calculation for spacing and collision avoidance
 function framesToAss(frames, styles, videoWidth, videoHeight) {
   
-  // Define coordinate system based on actual video size
   const playResX = videoWidth;
   const playResY = videoHeight;
   
-  // Use a standard height for proportional calculations
   const REFERENCE_HEIGHT = 1080; 
   const scaleFactor = playResY / REFERENCE_HEIGHT;
 
-  // Style 1 (TOP Line in final video)
+  // Style 1 (TOP Line)
   const font1 = (styles && styles.fontTop) || 'Lexend';
   const size1 = (styles && styles.fontSizeTop) || 64;
   const color1Primary = cssToAssColor(styles && styles.colorTop);  
   const weight1 = (styles && (styles.fontWeightTop === '700')) ? '1' : '0';  
   const italic1 = (styles && styles.isItalicTop) ? '1' : '0';  
 
-  // Style 2 (BOTTOM Line in final video)
+  // Style 2 (BOTTOM Line)
   const font2 = (styles && styles.fontBottom) || 'Cormorant Garamond';
   const size2 = (styles && styles.fontSizeBottom) || 100;
   const color2Primary = cssToAssColor(styles && styles.colorBottom);  
   const weight2 = (styles && (styles.fontWeightBottom === '700')) ? '1' : '0';
   const italic2 = (styles && styles.isItalicBottom) ? '1' : '0';
   
-  // Custom padding from the bottom edge for the BOTTOM LINE (Line 2)
   const paddingBottom = (styles && styles.paddingBottom) || 200;
 
   // --- CALCULATE FIXED Y-POSITIONS ---
   
-  // Vertical Gap between the two lines (scaled)
-  const VERTICAL_GAP = Math.round(15 * scaleFactor); 
-  
-  // Line Height Allowance for Line 1 (scaled by its font size)
-  // CRITICAL CHANGE: We assume Line 1 *might* wrap and reserve space for two lines.
-  const scaledSize1 = Math.round(size1 * scaleFactor);
-  const LINE1_HEIGHT_ALLOWANCE = scaledSize1; 
-  
-  // Y-position for Line 2 (BOTTOM LINE)
-  // Position is measured from the top, so Y = Total Height - Scaled Padding
-  const Y_pos_Line2 = playResY - Math.round(paddingBottom * scaleFactor);
-  
-  // Y-position for Line 1 (TOP LINE)
-  // Line 1 is positioned above Line 2's baseline by: 
-  // (Line 2 Font Size) + (Vertical Gap) + (Line 1's expected height when single-line)
-  // We add the height allowance here to ensure the wrapped line doesn't dip below this line.
-  const Y_pos_Line1 = Y_pos_Line2 - Math.round(size2 * scaleFactor) - VERTICAL_GAP - LINE1_HEIGHT_ALLOWANCE;
+  // Adjusted Vertical Gap between the two lines for tighter spacing (scaled)
+  const VERTICAL_GAP = Math.round(10 * scaleFactor); // Reduced from 15 to 10 for tighter spacing
 
-  // Horizontal clip boundaries for Line 1 to force wrapping/centering inside a safe zone
-  const CLIP_WIDTH = 0.8; // 80% of screen width
-  const clipLeft = Math.round((playResX * (1 - CLIP_WIDTH)) / 2);
-  const clipRight = Math.round(playResX - clipLeft);
+  // Line Height Allowance for Line 1 (scaled by its font size)
+  // CRITICAL: Ensure enough space for a potential two-line wrap for Line 1. 
+  // We assume a minimum of 1.5 lines of text height for the top line to be safe.
+  const scaledSize1 = Math.round(size1 * scaleFactor);
+  // This value determines how much space is 'reserved' for Line 1's content *above its baseline*.
+  const LINE1_EFFECTIVE_HEIGHT_FOR_STACKING = Math.round(scaledSize1 * 1.8); // Adjusted multiplier for safety (e.g., 1.5-2.0)
   
+  // Line Height Allowance for Line 2 (scaled by its font size)
+  const scaledSize2 = Math.round(size2 * scaleFactor);
+  const LINE2_EFFECTIVE_HEIGHT_FOR_STACKING = scaledSize2; // Assume Line 2 is always one line
+
+  // Y-position for Line 2 (BOTTOM LINE baseline)
+  // This is the anchor. Positioned from the top, so Y = Total Height - Scaled Padding
+  const Y_pos_Line2_baseline = playResY - Math.round(paddingBottom * scaleFactor);
+  
+  // Y-position for Line 1 (TOP LINE baseline)
+  // Calculated upwards from Line 2's baseline:
+  // (Line 2's effective height) + (Vertical Gap) + (Line 1's effective height)
+  // This ensures there's enough room *between* the baselines.
+  const Y_pos_Line1_baseline = Y_pos_Line2_baseline 
+                                - LINE2_EFFECTIVE_HEIGHT_FOR_STACKING 
+                                - VERTICAL_GAP 
+                                - LINE1_EFFECTIVE_HEIGHT_FOR_STACKING; // This accounts for Line 1 wrapping
+
   // Setup for consistent shadows/outlines
   const shadowColor = '&H80000000'; 
   const outline = 0;  
@@ -181,18 +175,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     // Line 1 (TOP) -> Uses STYLE1 and fixed Y position
     if (f.line1 && f.line1.trim() !== '') {
       const text1 = getPlainText(f.line1);
-      // Use \clip(x1, y1, x2, y2) to constrain the text block horizontally
-      // Use \pos to set the vertical position, which is now higher to allow for wrapping.
-      const clipTag = `{\\clip(${clipLeft}, 0, ${clipRight}, ${playResY})}`;
-      const posTag = `{\\pos(${playResX / 2},${Y_pos_Line1})}`;
-      lines.push(`Dialogue: 0,${assStart},${assEnd},STYLE1,,0,0,0,,${clipTag}${posTag}${text1}`);
+      // Removed \clip as it might interfere with natural wrapping/centering.
+      // Y position is now calculated to provide ample space for wrapping.
+      const posTag = `{\\pos(${playResX / 2},${Y_pos_Line1_baseline})}`;
+      lines.push(`Dialogue: 0,${assStart},${assEnd},STYLE1,,0,0,0,,${posTag}${text1}`);
     }
     
     // Line 2 (BOTTOM) -> Uses STYLE2 and fixed Y position
     if (f.line2 && f.line2.trim() !== '') {
       const text2 = getPlainText(f.line2);
-      // No clipping needed here.
-      lines.push(`Dialogue: 0,${assStart},${assEnd},STYLE2,,0,0,0,,{\\pos(${playResX / 2},${Y_pos_Line2})}${text2}`);
+      lines.push(`Dialogue: 0,${assStart},${assEnd},STYLE2,,0,0,0,,{\\pos(${playResX / 2},${Y_pos_Line2_baseline})}${text2}`);
     }
     
     return lines;
