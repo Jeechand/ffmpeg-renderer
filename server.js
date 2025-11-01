@@ -60,51 +60,7 @@ function secToAss(tSec) {
 
 // --- HELPER FUNCTIONS ---
 
-function findFontFile(startDir, fontName) {
-  if (!fsSync.existsSync(startDir) || !fontName) {
-    return null;
-  }
-
-  const files = fsSync.readdirSync(startDir, { withFileTypes: true });
-  for (const file of files) {
-    const fullPath = path.join(startDir, file.name);
-    if (file.isDirectory()) {
-      const found = findFontFile(fullPath, fontName);
-      if (found) return found;
-    } else if (file.isFile()) {
-      const ext = path.extname(file.name).toLowerCase();
-      if (ext === '.ttf' || ext === '.otf') {
-        const baseName = path.basename(file.name, ext);
-        if (baseName.toLowerCase().replace(/[\s-_]/g, '').includes(fontName.toLowerCase().replace(/[\s-_]/g, ''))) {
-          return fullPath;
-        }
-      }
-    }
-  }
-  return null;
-}
-
-function findFirstFontFile(startDir) {
-  if (!fsSync.existsSync(startDir)) {
-    return null;
-  }
-  const files = fsSync.readdirSync(startDir, { withFileTypes: true });
-  for (const file of files) {
-    const fullPath = path.join(startDir, file.name);
-    if (file.isDirectory()) {
-      const found = findFirstFontFile(fullPath);
-      if (found) return found;
-    } else if (file.isFile()) {
-      const ext = path.extname(file.name).toLowerCase();
-      if (ext === '.ttf' || ext === '.otf') {
-        return fullPath;
-      }
-    }
-  }
-  return null;
-}
-
-function cssToAssColor(hex, alpha = '00') {
+function cssToAssColor(hex) {
   if (hex === 'white') hex = '#FFFFFF';
   if (hex === 'yellow') hex = '#FFFF00';
   if (hex === 'black') hex = '#000000';
@@ -127,39 +83,47 @@ function cssToAssColor(hex, alpha = '00') {
     return '&H00FFFFFF'; // Default on invalid length
   }
 
-  // ASS format is &H + Alpha + Blue + Green + Red
-  return `&H${alpha}${b}${g}${r}`.toUpperCase();
+  // ASS format is &H + Alpha (00) + Blue + Green + Red
+  return `&H00${b}${g}${r}`.toUpperCase();
 }
 
 
-// --- REPLACED framesToAss FUNCTION ---
-// Re-styled to match the Bubble preview (large font, drop shadow, no outline)
+// --- MODIFIED: framesToAss with NO Animation, Fixed Alignment, and Tighter Line Height (using \linesp and compensatory swap) ---
 function framesToAss(frames, styles, playResX = 1920, playResY = 1080) {
   
-  // Style 1 (Top Line) - from your Bubble JS
-  // --- MODIFIED: Increased font size to match target image ---
+  // Style 1 (Used for Visual BOTTOM Line Content due to compensation)
   const font1 = (styles && styles.fontTop) || 'Lexend';
-  const size1 = (styles && styles.fontSizeTop) || 80; // Increased from 48/56
-  const color1 = cssToAssColor(styles && styles.colorTop);
-  const weight1 = (styles && (styles.fontWeightTop === 'bold' || styles.fontWeightTop === '700')) ? '1' : '0';
+  const size1 = (styles && styles.fontSizeTop) || 80;
+  const color1Primary = cssToAssColor(styles && styles.colorTop); 
+  
+  const weight1 = (styles && (styles.fontWeightTop === '700')) ? '1' : '0'; 
+  const italic1 = (styles && styles.isItalicTop) ? '1' : '0'; 
 
-  // Style 2 (Bottom Line) - from your Bubble JS
-  // --- MODIFIED: Increased font size to match target image ---
+  // Style 2 (Used for Visual TOP Line Content due to compensation)
   const font2 = (styles && styles.fontBottom) || 'Lexend';
-  const size2 = (styles && styles.fontSizeBottom) || 80; // Increased from 48/56
-  const color2 = cssToAssColor(styles && styles.colorBottom);
-  const weight2 = (styles && (styles.fontWeightBottom === 'bold' || styles.fontWeightBottom === '700')) ? '1' : '0';
+  const size2 = (styles && styles.fontSizeBottom) || 80;
+  const color2Primary = cssToAssColor(styles && styles.colorBottom); 
   
-  // --- MODIFIED: Using 100px default to match Bubble CSS ---
-  const marginV_Line2 = (styles && styles.paddingBottom) || 100;
+  const weight2 = (styles && (styles.fontWeightBottom === '700')) ? '1' : '0';
+  const italic2 = (styles && styles.isItalicBottom) ? '1' : '0';
   
-  // Margin for Line 1: It's Line 2's margin + Line 2's *font size* + a small gap
-  const marginV_Line1 = marginV_Line2 + size2 + 15; // 15px gap
+  // --- Line Height & Padding Setup (using \linesp) ---
+  const marginV_Line2 = (styles && styles.paddingBottom) || 200; // BASE margin for the visual TOP line (assigned to STYLE2)
   
-  // --- MODIFIED: ShadowColor, Outline=0, Shadow=2 ---
-  // This replicates the `text-shadow: 1px 1px 2px #000000;` from your CSS
-  const shadowColor = '&H80000000'; // 50% opaque black
-  const outline = 0; // No outline
+  // Calculate vertical offset for the visual BOTTOM line (assigned to STYLE1)
+  const avgFontSize = (size1 + size2) / 2;
+  // Reduced to 0.9 to create a tighter, slightly overlapping vertical distance
+  const idealVerticalOffset = avgFontSize * 0.9; 
+  
+  // STYLE1 must have the higher MarginV value to be rendered lower (at the bottom of the screen)
+  const marginV_Line1 = marginV_Line2 + idealVerticalOffset; 
+  
+  // ASS \linesp override for tight spacing between lines *if* a single line wraps or uses \N
+  const lineSpacing = '-0.5'; 
+  
+  // Clean drop shadow settings (no outline)
+  const shadowColor = '&H80000000'; // 50% opaque black shadow color
+  const outline = 0; 
   const shadow = 2; // Shadow distance
   
   const header = `[Script Info]
@@ -170,29 +134,36 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: STYLE1,${font1},${size1},${color1},&H000000FF,&H00000000,${shadowColor},${weight1},0,0,0,100,100,0,0,1,${outline},${shadow},2,20,20,${marginV_Line1},1
-Style: STYLE2,${font2},${size2},${color2},&H000000FF,&H00000000,${shadowColor},${weight2},0,0,0,100,100,0,0,1,${outline},${shadow},2,20,20,${marginV_Line2},1
+Style: STYLE1,${font1},${size1},${color1Primary},&H00000000,&H00000000,${shadowColor},${weight1},${italic1},0,0,100,100,${lineSpacing},0,1,${outline},${shadow},2,20,20,${marginV_Line1},1
+Style: STYLE2,${font2},${size2},${color2Primary},&H00000000,&H00000000,${shadowColor},${weight2},${italic2},0,0,100,100,${lineSpacing},0,1,${outline},${shadow},2,20,20,${marginV_Line2},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
   
+  const getPlainText = (lineText) => {
+    // The text content should be clean for ASS
+    return lineText ? lineText.trim() : '';
+  };
+  
   const events = frames.flatMap(f => {
     const startSec = (f.start || 0) / 1000;
     const endSec = (f.end || (startSec + 2000)) / 1000;
     const startAss = secToAss(startSec);
-    const endAss = secToAss(endSec);
+    const endAss = secToAss(endAss);
     
     const lines = [];
     
+    // Line 1: (Visual TOP line content) -> Assigned STYLE2 (Lower MarginV) -> CORRECT ALIGNMENT DUE TO COMPENSATORY SWAP
     if (f.line1 && f.line1.trim() !== '') {
-      const text1 = f.line1.replace(/\n/g, '\\N');
-      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE1,,0,0,0,,${text1}`);
+      const text1 = getPlainText(f.line1);
+      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE2,,0,0,0,,${text1}`);
     }
     
+    // Line 2: (Visual BOTTOM line content) -> Assigned STYLE1 (Higher MarginV) -> CORRECT ALIGNMENT DUE TO COMPENSATORY SWAP
     if (f.line2 && f.line2.trim() !== '') {
-      const text2 = f.line2.replace(/\n/g, '\\N');
-      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE2,,0,0,0,,${text2}`);
+      const text2 = getPlainText(f.line2);
+      lines.push(`Dialogue: 0,${startAss},${endAss},STYLE1,,0,0,0,,${text2}`);
     }
     
     return lines;
@@ -224,7 +195,7 @@ app.post('/render', async (req, res) => {
       return res.status(401).json({ status: 'error', error: 'unauthorized' });
     }
 
-    const { job_id, reservation_id, video_url, frames, style, callback_url, plan_tier } = req.body || {};
+    const { job_id, video_url, frames, style, callback_url, logo_url } = req.body || {};
 
     if (!video_url || !frames) {
       return res.status(400).json({ status: 'error', error: 'missing fields - require video_url and frames' });
@@ -234,7 +205,7 @@ app.post('/render', async (req, res) => {
     const tmpDir = '/tmp';
     const inputPath = path.join(tmpDir, `in-${job_id}.mp4`);
     const assPath = path.join(tmpDir, `subs-${job_id}.ass`);
-    // --- REMOVED GRADIENT PATH ---
+    const logoPath = path.join(tmpDir, `logo-${job_id}.png`); 
     const outPath = path.join(tmpDir, `out-${job_id}.mp4`);
 
     // 1) Download the input video
@@ -246,60 +217,83 @@ app.post('/render', async (req, res) => {
       writer.on('error', reject);
     });
 
-    // 2) Create ASS subtitles
+    // 2) Download logo if provided
+    let logoInput = null;
+
+    if (logo_url) {
+        try {
+            const logoWriter = (await axios({ url: logo_url, method: 'GET', responseType: 'stream' })).data;
+            const logoOutStream = fsSync.createWriteStream(logoPath);
+            await new Promise((resolve, reject) => {
+                logoWriter.pipe(logoOutStream);
+                logoWriter.on('end', resolve);
+                logoWriter.on('error', reject);
+            });
+            logoInput = logoPath;
+        } catch (e) {
+            console.error('Failed to download logo:', e.message);
+            // Non-fatal: just continue without a logo
+        }
+    }
+
+    // 3) Create ASS subtitles
     const ass = framesToAss(frames, style);
     await fs.writeFile(assPath, ass, 'utf8');
 
-    // 3) --- REMOVED GRADIENT GENERATION ---
-
-    // 4) Decide watermark via drawtext (ffmpeg)
-    const addWatermark = (plan_tier === 'free' || plan_tier === 'trial');
-    const watermarkText = (style && style.watermarkText) ? style.watermarkText : 'YourBrand';
-
-    let fontFile = '';
-    try {
-        const preferredFontName = (style && style.fontTop) || 'Lexend';
-        fontFile = findFontFile('/app/fonts', preferredFontName);
-        
-        if (!fontFile) {
-            fontFile = findFirstFontFile('/app/fonts');
-        }
-    } catch (e) {
-        console.warn("Error searching for fonts:", e.message);
-        fontFile = ''; // Will default to 'Sans'
-    }
-
-    const escapedText = watermarkText.replace(/[:']/g, ""); 
-    const drawtextSnippet = addWatermark
-      ? (fontFile
-          ? `drawtext=fontfile='${fontFile}':text='${escapedText}':fontsize=28:fontcolor=white@0.7:x=main_w-tw-10:y=main_h-th-10`
-          : `drawtext=font='Sans':text='${escapedText}':fontsize=28:fontcolor=white@0.7:x=main_w-tw-10:y=main_h-th-10`)
-      : '';
-
-    // 5) Build ffmpeg filter_complex
-    // --- MODIFIED: Simplified filter_complex, removed gradient overlay ---
+    // 4) Build ffmpeg filter_complex
     let ffArgs;
     const assFilter = `ass=filename=${assPath}:fontsdir=/app/fonts`;
+    let filterComplex;
 
-    if (addWatermark) {
-      ffArgs = [
-        '-y', '-i', inputPath,
-        // No gradient input
-        '-filter_complex',
-        `[0:v]${drawtextSnippet}[tmpv];[tmpv]${assFilter}[v]`, // Chain ass filter after drawtext
-        '-map', '[v]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath
-      ];
+    const WATERMARK_TEXT = "AiVideoCaptioner";
+    const LOGO_SIZE = 18; // <-- FURTHER REDUCED Logo size
+    const TEXT_WATERMARK_FONT_SIZE = 18; // <-- FURTHER REDUCED Text watermark font size
+    const PADDING = 32; // 32px padding for watermark
+
+    // 4a. Watermark setup: Logo or Text
+    if (logoInput) {
+        // Logo setup: scale logo and overlay it onto the main video
+        filterComplex = 
+            `[0:v]scale=w=${LOGO_SIZE}:h=${LOGO_SIZE}[logo];` + // Scale logo (Input 0)
+            // Overlay logo onto video (Input 1), positioning TOP RIGHT (y=PADDING)
+            `[1:v][logo]overlay=x=main_w-overlay_w-${PADDING}:y=${PADDING}[v_wm]`; 
+        
+        // Final Chain: [v_wm] -> ASS -> [v]
+        filterComplex += `;[v_wm]${assFilter}[v]`;
+
+        ffArgs = [
+            '-y', 
+            '-i', logoInput, // Input 0: Logo
+            '-i', inputPath, // Input 1: Video
+            '-filter_complex', filterComplex,
+            '-map', '[v]', '-map', '1:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath
+        ];
+
     } else {
-      ffArgs = [
-        '-y', '-i', inputPath,
-        // No gradient input
-        '-filter_complex',
-        `[0:v]${assFilter}[v]`, // Just apply ass filter
-        '-map', '[v]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath
-      ];
+        // Text Watermark setup (No logo provided)
+        const watermarkDrawText = 
+          `drawtext=` +
+          `fontfile='Lexend-Regular.ttf':` + 
+          `text='${WATERMARK_TEXT}':` +
+          `fontsize=${TEXT_WATERMARK_FONT_SIZE}:` + // <-- Watermark text size
+          `fontcolor=white@0.7:` +
+          // Positioning TOP RIGHT (y=PADDING)
+          `x=main_w-tw-${PADDING}:` + 
+          `y=${PADDING}[v_wm]`; 
+
+        // Final Chain: [0:v] -> Watermark Drawtext -> ASS -> [v]
+        filterComplex = `[0:v]${watermarkDrawText};[v_wm]${assFilter}[v]`;
+        
+        ffArgs = [
+            '-y', 
+            '-i', inputPath,
+            '-filter_complex', filterComplex,
+            '-map', '[v]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath
+        ];
     }
 
-    // 6) Run ffmpeg
+
+    // 5) Run ffmpeg
     try {
       await runFFmpeg(ffArgs);
     } catch (ffErr) {
@@ -307,7 +301,7 @@ app.post('/render', async (req, res) => {
       return res.status(500).json({ status: 'error', error: 'ffmpeg failed: ' + ffErr.message });
     }
 
-    // 7) Upload result to GCS
+    // 6) Upload result to GCS
     const destName = `renders/${job_id}-${Date.now()}.mp4`;
     let publicUrl;
     try {
@@ -317,12 +311,11 @@ app.post('/render', async (req, res) => {
       return res.status(500).json({ status: 'error', error: 'upload failed: ' + uerr.message });
     }
 
-    // 8) Optional callback to Bubble
+    // 7) Optional callback to Bubble
     if (callback_url) {
       try {
         await axios.post(callback_url, {
-          render__secret: RENDER_SECRET,
-          reservation_id,
+          render_secret: RENDER_SECRET,
           job_id,
           status: 'success',
           video_url: publicUrl
@@ -332,7 +325,7 @@ app.post('/render', async (req, res) => {
       }
     }
 
-    // 9) Respond
+    // 8) Respond
     return res.json({ status: 'success', job_id, video_url: publicUrl });
 
   } catch (err) {
