@@ -19,10 +19,12 @@ const RENDER_SECRET = process.env.RENDER_SECRET || 'change_me';
 // Utility functions
 // -------------------------
 function runCommandSync(cmd) {
+  // Utility for quick synchronous command execution (used for ffprobe)
   execSync(cmd, { stdio: 'inherit' });
 }
 
 function runFFmpeg(args) {
+  // Promisified execution of ffmpeg command
   return new Promise((resolve, reject) => {
     const ff = spawn('ffmpeg', args, { stdio: 'inherit' });
     ff.on('close', code => {
@@ -35,10 +37,12 @@ function runFFmpeg(args) {
 async function uploadToGCS(localPath, destName) {
   if (!BUCKET) throw new Error('BUCKET_NAME not set in env');
   const bucket = storage.bucket(BUCKET);
+  // Upload file
   await bucket.upload(localPath, { destination: destName });
 
   const file = bucket.file(destName);
 
+  // Create a signed URL valid for 7 days (max allowed by GCS)
   const expiresDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); 
   const [signedUrl] = await file.getSignedUrl({
     version: 'v4',
@@ -50,6 +54,7 @@ async function uploadToGCS(localPath, destName) {
 }
 
 function secToAss(tSec) {
+  // Converts seconds (float) to ASS timestamp format H:MM:SS.cc
   const h = Math.floor(tSec / 3600);
   const m = Math.floor((tSec % 3600) / 60);
   const s = Math.floor(tSec % 60);
@@ -58,8 +63,9 @@ function secToAss(tSec) {
 }
 
 function cssToAssColor(hex) {
+  // Converts CSS hex color (#RRGGBB) to ASS color format (&HBBGGRR)
   if (!hex || typeof hex !== 'string' || !hex.startsWith('#')) {
-    return '&H00FFFFFF'; 
+    return '&H00FFFFFF'; // Default to Opaque White
   }
   
   let r, g, b;
@@ -76,63 +82,58 @@ function cssToAssColor(hex) {
     return '&H00FFFFFF';
   }
 
+  // ASS format is &H + Alpha (00 for Opaque) + Blue + Green + Red
   return `&H00${b}${g}${r}`.toUpperCase();
 }
 
 
-// ⭐ FINAL TUNED LOGIC: Precise \pos calculation for spacing and collision avoidance
+// ⭐ MAJOR CHANGE: Now accepts videoWidth and videoHeight from ffprobe
 function framesToAss(frames, styles, videoWidth, videoHeight) {
   
+  // Define default coordinate system based on actual video size
   const playResX = videoWidth;
   const playResY = videoHeight;
   
-  const REFERENCE_HEIGHT = 1080; 
-  const scaleFactor = playResY / REFERENCE_HEIGHT;
+  // Use a sensible default for proportional calculations
+  const defaultHeightForProportions = 1080; 
 
-  // Style 1 (TOP Line)
+  // Style 1 (TOP Line in final video)
   const font1 = (styles && styles.fontTop) || 'Lexend';
   const size1 = (styles && styles.fontSizeTop) || 64;
   const color1Primary = cssToAssColor(styles && styles.colorTop);  
   const weight1 = (styles && (styles.fontWeightTop === '700')) ? '1' : '0';  
   const italic1 = (styles && styles.isItalicTop) ? '1' : '0';  
 
-  // Style 2 (BOTTOM Line)
+  // Style 2 (BOTTOM Line in final video)
   const font2 = (styles && styles.fontBottom) || 'Cormorant Garamond';
   const size2 = (styles && styles.fontSizeBottom) || 100;
   const color2Primary = cssToAssColor(styles && styles.colorBottom);  
   const weight2 = (styles && (styles.fontWeightBottom === '700')) ? '1' : '0';
   const italic2 = (styles && styles.isItalicBottom) ? '1' : '0';
   
+  // Custom padding from the bottom edge for the BOTTOM LINE (Line 2)
   const paddingBottom = (styles && styles.paddingBottom) || 200;
 
-  // --- CALCULATE FIXED Y-POSITIONS ---
+  // --- CALCULATE FIXED Y-POSITIONS RELATIVE TO VIDEO HEIGHT ---
   
-  // Adjusted Vertical Gap between the two lines for tighter spacing (scaled)
-  const VERTICAL_GAP = Math.round(10 * scaleFactor); // Reduced from 15 to 10 for tighter spacing
+  // 1. Calculate the Y-coordinates based on the user's requested padding
+  //    The padding value (e.g., 200px) is *proportional* to the 1080px reference height.
+  const VERTICAL_GAP = 15; 
+  
+  // Scale factor: how much to scale the default 1080px proportions to the actual video height
+  const scaleFactor = playResY / defaultHeightForProportions;
 
-  // Line Height Allowance for Line 1 (scaled by its font size)
-  // CRITICAL: Ensure enough space for a potential two-line wrap for Line 1. 
-  // We assume a minimum of 1.5 lines of text height for the top line to be safe.
-  const scaledSize1 = Math.round(size1 * scaleFactor);
-  // This value determines how much space is 'reserved' for Line 1's content *above its baseline*.
-  const LINE1_EFFECTIVE_HEIGHT_FOR_STACKING = Math.round(scaledSize1 * 1.8); // Adjusted multiplier for safety (e.g., 1.5-2.0)
+  // Y-position for Line 2 (BOTTOM LINE) - Scaled based on actual video height
+  const proportionalPadding = paddingBottom * scaleFactor;
+  // Position is measured from the top, so Y = Total Height - Scaled Padding
+  const Y_pos_Line2 = playResY - proportionalPadding;
   
-  // Line Height Allowance for Line 2 (scaled by its font size)
-  const scaledSize2 = Math.round(size2 * scaleFactor);
-  const LINE2_EFFECTIVE_HEIGHT_FOR_STACKING = scaledSize2; // Assume Line 2 is always one line
+  // Y-position for Line 1 (TOP LINE) - Scale font size and gap for accurate placement
+  const scaledSize2 = size2 * scaleFactor;
+  const scaledGap = VERTICAL_GAP * scaleFactor;
 
-  // Y-position for Line 2 (BOTTOM LINE baseline)
-  // This is the anchor. Positioned from the top, so Y = Total Height - Scaled Padding
-  const Y_pos_Line2_baseline = playResY - Math.round(paddingBottom * scaleFactor);
-  
-  // Y-position for Line 1 (TOP LINE baseline)
-  // Calculated upwards from Line 2's baseline:
-  // (Line 2's effective height) + (Vertical Gap) + (Line 1's effective height)
-  // This ensures there's enough room *between* the baselines.
-  const Y_pos_Line1_baseline = Y_pos_Line2_baseline 
-                                - LINE2_EFFECTIVE_HEIGHT_FOR_STACKING 
-                                - VERTICAL_GAP 
-                                - LINE1_EFFECTIVE_HEIGHT_FOR_STACKING; // This accounts for Line 1 wrapping
+  // Y_pos_Line1 is positioned above Line 2 by Line 2's scaled size + the scaled vertical gap.
+  const Y_pos_Line1 = Y_pos_Line2 - scaledSize2 - scaledGap;
 
   // Setup for consistent shadows/outlines
   const shadowColor = '&H80000000'; 
@@ -175,16 +176,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     // Line 1 (TOP) -> Uses STYLE1 and fixed Y position
     if (f.line1 && f.line1.trim() !== '') {
       const text1 = getPlainText(f.line1);
-      // Removed \clip as it might interfere with natural wrapping/centering.
-      // Y position is now calculated to provide ample space for wrapping.
-      const posTag = `{\\pos(${playResX / 2},${Y_pos_Line1_baseline})}`;
-      lines.push(`Dialogue: 0,${assStart},${assEnd},STYLE1,,0,0,0,,${posTag}${text1}`);
+      // Use \pos to set the absolute center (X=videoWidth/2) and calculated Y position.
+      lines.push(`Dialogue: 0,${assStart},${assEnd},STYLE1,,0,0,0,,{\\pos(${playResX / 2},${Y_pos_Line1})}${text1}`);
     }
     
     // Line 2 (BOTTOM) -> Uses STYLE2 and fixed Y position
     if (f.line2 && f.line2.trim() !== '') {
       const text2 = getPlainText(f.line2);
-      lines.push(`Dialogue: 0,${assStart},${assEnd},STYLE2,,0,0,0,,{\\pos(${playResX / 2},${Y_pos_Line2_baseline})}${text2}`);
+      lines.push(`Dialogue: 0,${assStart},${assEnd},STYLE2,,0,0,0,,{\\pos(${playResX / 2},${Y_pos_Line2})}${text2}`);
     }
     
     return lines;
@@ -193,20 +192,21 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   return header + events;
 }
 
-// Function to get video resolution remains the same
+// ⭐ NEW FUNCTION: Extracts video resolution using ffprobe
 async function getVideoResolution(inputPath) {
   try {
     const out = execSync(`ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "${inputPath}"`).toString().trim();
     const [w, h] = out.split(',');
     return { width: parseInt(w), height: parseInt(h) };
   } catch (e) {
+    // Fallback to a safe default if ffprobe fails
     console.warn('ffprobe failed to get video resolution. Using 1920x1080 as fallback.');
     return { width: 1920, height: 1080 };
   }
 }
 
 // -------------------------
-// Main /render endpoint (remains the same as last successful version)
+// Main /render endpoint
 // -------------------------
 app.post('/render', async (req, res) => {
   
@@ -253,7 +253,7 @@ app.post('/render', async (req, res) => {
         return res.status(500).json({ status: 'error', error: errorMsg });
     }
     
-    // Get actual video resolution
+    // ⭐ NEW STEP: Get actual video resolution
     const videoResolution = await getVideoResolution(inputPath);
     console.log(`Video Resolution Detected: ${videoResolution.width}x${videoResolution.height}`);
 
