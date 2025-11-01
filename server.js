@@ -62,10 +62,7 @@ async function getVideoResolution(inputPath) {
 }
 
 // -------------------------
-// Tuned framesToAss() for Lexend(40) + Cormorant Garamond(52) usage
-// - anchors the bottom line (line2) at paddingBottom
-// - positions top line (line1) above it with tuned baseline heuristics
-// - uses {\an5\pos(...)} so both lines are centered at the exact same X
+// framesToAss() with conditional extra-down for two-line frames
 // -------------------------
 function framesToAss(frames, styles = {}, videoWidth, videoHeight) {
   const playResX = videoWidth;
@@ -91,14 +88,23 @@ function framesToAss(frames, styles = {}, videoWidth, videoHeight) {
   const baseGap = 18 * scale; // tuned base gap
 
   // Tuned baseline heuristics for these fonts/sizes:
-  // - Cormorant has larger descenders/visual height so allocate a larger factor
-  // - Lexend sits higher visually, so smaller factor
   const baselineFactorBottom = 0.65; // portion of bottom font height to reserve above its baseline
   const baselineFactorTop = 0.30;    // portion of top font that visually extends above baseline
   const extraGapFactor = 0.20;       // additional separation as fraction of bottom font size
 
-  // Compute Y positions (measured from top)
-  const Y_pos_Line2 = playResY - (paddingBottom * scale); // bottom anchored
+  // Compute base Y for Line 2 (anchored)
+  let Y_pos_Line2 = playResY - (paddingBottom * scale);
+
+  // If ANY frame contains both line1 and line2, we want to push the bottom line down a bit
+  // to avoid tiny overlaps when top text exists. This only nudges the bottom line, not single-line frames.
+  const twoLinePresent = frames.some(f => f.line1 && f.line1.trim() && f.line2 && f.line2.trim());
+  if (twoLinePresent) {
+    // extra downward nudge proportional to bottom font height (tune multiplier as needed)
+    const extraDownWhenTwoLines = Math.round(scaledBottom * 0.40); // 35% of bottom font size
+    Y_pos_Line2 += extraDownWhenTwoLines;
+  }
+
+  // Compute Y for Line1 above Line2 (so top never pushes bottom)
   const Y_pos_Line1 = Y_pos_Line2
     - (scaledBottom * baselineFactorBottom)
     - (scaledTop * baselineFactorTop)
