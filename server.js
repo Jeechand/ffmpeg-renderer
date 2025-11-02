@@ -100,7 +100,7 @@ function framesToAss(frames, styles = {}, videoWidth, videoHeight) {
   const twoLinePresent = frames.some(f => f.line1 && f.line1.trim() && f.line2 && f.line2.trim());
   if (twoLinePresent) {
     // extra downward nudge proportional to bottom font height (tune multiplier as needed)
-    const extraDownWhenTwoLines = Math.round(scaledBottom * 0.40); // 35% of bottom font size
+    const extraDownWhenTwoLines = Math.round(scaledBottom * 0.80); // 80% of bottom font size
     Y_pos_Line2 += extraDownWhenTwoLines;
   }
 
