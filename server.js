@@ -14,11 +14,15 @@ const storage = new Storage();
 const BUCKET = process.env.BUCKET_NAME || '';
 const RENDER_SECRET = process.env.RENDER_SECRET || 'change_me';
 
+// System fonts dir (where Dockerfile copies fonts)
+const SYSTEM_FONTS_DIR = process.env.SYSTEM_FONTS_DIR || '/usr/local/share/fonts/custom';
+
 // -------------------------
 // Utilities
 // -------------------------
 function runFFmpeg(args) {
   return new Promise((resolve, reject) => {
+    // keep stdio: 'inherit' so ffmpeg logs appear in Cloud Run logs
     const ff = spawn('ffmpeg', args, { stdio: 'inherit' });
     ff.on('close', code => (code === 0 ? resolve() : reject(new Error('ffmpeg exit code ' + code))));
   });
@@ -100,7 +104,7 @@ function framesToAss(frames, styles = {}, videoWidth, videoHeight) {
   const twoLinePresent = frames.some(f => f.line1 && f.line1.trim() && f.line2 && f.line2.trim());
   if (twoLinePresent) {
     // extra downward nudge proportional to bottom font height (tune multiplier as needed)
-    const extraDownWhenTwoLines = Math.round(scaledBottom * 0.30); // 80% of bottom font size
+    const extraDownWhenTwoLines = Math.round(scaledBottom * 0.30);
     Y_pos_Line2 += extraDownWhenTwoLines;
   }
 
@@ -152,7 +156,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 }
 
 // -------------------------
-// /render endpoint
+// /render endpoint (with improved logging + style parsing)
 // -------------------------
 app.post('/render', async (req, res) => {
   try {
@@ -162,7 +166,47 @@ app.post('/render', async (req, res) => {
     const provided = headerSecret || bodySecret || '';
     if (provided !== RENDER_SECRET) return res.status(401).json({ status: 'error', error: 'unauthorized' });
 
-    const { job_id, video_url, frames, style, callback_url, watermark_url, plan_tier } = req.body || {};
+    // Basic request logging for debugging differences between curl and Make
+    console.log('=== Incoming /render request ===');
+    console.log('Headers:', {
+      'X-Render-Secret': !!headerSecret,
+      'content-type': req.header('content-type') || ''
+    });
+    console.log('Body keys:', Object.keys(req.body || {}).join(', '));
+
+    // Extract fields
+    let { job_id, video_url, frames, style, callback_url, watermark_url, plan_tier } = req.body || {};
+
+    // If style was serialized as a JSON string by the caller (common in Make), parse it
+    if (typeof style === 'string') {
+      try {
+        style = JSON.parse(style);
+        console.log('Parsed style from string payload.');
+      } catch (e) {
+        console.warn('style appears to be string but failed JSON.parse; continuing with defaults.');
+      }
+    }
+
+    // Log the resolved style object and types so we can compare later
+    console.log('Resolved style:', style ? JSON.stringify(style) : '(no style)');
+    console.log('Frames count:', Array.isArray(frames) ? frames.length : 'none');
+
+    // Quick font dir sanity check (helpful to diagnose missing-font-vs-request-shape)
+    try {
+      const fontDir = SYSTEM_FONTS_DIR;
+      const fontFiles = fsSync.existsSync(fontDir) ? fsSync.readdirSync(fontDir) : [];
+      console.log('FontDir:', fontDir, 'exists:', !!fontFiles.length, 'files:', fontFiles.slice(0,50));
+      // Log whether requested families exist (using style)
+      const bottomFam = (style && style.fontBottom) || 'Cormorant Garamond';
+      const topFam = (style && style.fontTop) || 'Lexend';
+      const normalize = s => (s || '').toLowerCase().replace(/\s+/g,'');
+      const foundBottom = fontFiles.some(f => normalize(f).includes(normalize(bottomFam)) || normalize(f).includes('cormorant'));
+      const foundTop = fontFiles.some(f => normalize(f).includes(normalize(topFam)) || normalize(f).includes('lexend'));
+      console.log('Requested fontBottom:', bottomFam, 'foundInDir:', foundBottom, 'Requested fontTop:', topFam, 'foundInDir:', foundTop);
+    } catch (e) {
+      console.warn('Font dir check failed:', e.message || e);
+    }
+
     if (!video_url || !frames) return res.status(400).json({ status: 'error', error: 'missing fields - require video_url and frames' });
 
     const shouldAddWatermark = plan_tier === 'free';
@@ -222,7 +266,8 @@ app.post('/render', async (req, res) => {
     const WATERMARK_TEXT_SIZE = 18;
     const PADDING = 24;
 
-    const assFilter = `ass=filename=${assPath}:fontsdir=/app/fonts`;
+    // Use system fonts dir we populate in Dockerfile
+    const assFilter = `ass=filename=${assPath}:fontsdir=${SYSTEM_FONTS_DIR}`;
     let ffArgs;
     let filterComplex;
 
@@ -232,8 +277,11 @@ app.post('/render', async (req, res) => {
         filterComplex = `[0:v]scale=-1:${WATERMARK_IMAGE_HEIGHT}[wm_scaled];[1:v][wm_scaled]overlay=x=main_w-overlay_w-${PADDING}:y=${PADDING}[v_wm];[v_wm]${assFilter}[v]`;
         ffArgs = ['-y', '-i', watermarkInput, '-i', inputPath, '-filter_complex', filterComplex, '-map', '[v]', '-map', '1:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath];
       } else {
-        // fallback text watermark
-        const watermarkDrawText = `drawtext=fontfile='Lexend-Regular.ttf':text='${WATERMARK_TEXT}':fontsize=${WATERMARK_TEXT_SIZE}:fontcolor=white@0.7:x=main_w-tw-${PADDING}:y=${PADDING}[v_wm]`;
+        // fallback text watermark: use absolute font path for drawtext
+        // Make sure the filename here matches a font you placed into /app/fonts and copied into SYSTEM_FONTS_DIR
+        const lexendFilename = 'Lexend-VariableFont_wght.ttf'; // adjust if your file name differs
+        const lexendPath = path.join(SYSTEM_FONTS_DIR, lexendFilename);
+        const watermarkDrawText = `drawtext=fontfile='${lexendPath}':text='${WATERMARK_TEXT}':fontsize=${WATERMARK_TEXT_SIZE}:fontcolor=white@0.7:x=main_w-tw-${PADDING}:y=${PADDING}[v_wm]`;
         filterComplex = `[0:v]${watermarkDrawText};[v_wm]${assFilter}[v]`;
         ffArgs = ['-y', '-i', inputPath, '-filter_complex', filterComplex, '-map', '[v]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath];
       }
