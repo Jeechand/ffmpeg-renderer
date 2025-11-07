@@ -66,7 +66,7 @@ async function getVideoResolution(inputPath) {
 }
 
 // -------------------------
-// framesToAss() - Robust logic for all scenarios (FIXED PADDING & LINE HEIGHT)
+// framesToAss() - Robust logic for all scenarios (BASE PADDING 360PX)
 // -------------------------
 function framesToAss(frames, styles = {}, videoWidth, videoHeight) {
   const playResX = videoWidth;
@@ -80,17 +80,17 @@ function framesToAss(frames, styles = {}, videoWidth, videoHeight) {
   // 2. Calculate the correct scaling factor based on width.
   const scale = playResX / refW;
 
-  // 3. Define base font properties (these are correct)
+  // 3. Define base font properties
   const fontTop = styles.fontTop || 'Lexend';
   const fontBottom = styles.fontBottom || 'Cormorant Garamond';
   const baseFontSizeTop = styles.fontSizeTop || 40;
   const baseFontSizeBottom = styles.fontSizeBottom || 52;
   
   // 4. *** PADDING & GAP FIX ***
-  //    The target bottom padding for 360p is now explicitly 100px.
-  const correctedBasePaddingBottom = 100;
+  //    Setting base padding to 360 pixels for 360p reference width.
+  const correctedBasePaddingBottom = 360; // Set to 360 as requested
   
-  //    The base gap (vertical space between the two lines) is reduced for tighter spacing.
+  //    The base gap (vertical space between the two lines) is kept tight.
   const baseGapRef = 5; 
 
   // 5. Calculate all metrics using the CORRECT scale and CORRECTED base values
@@ -110,16 +110,17 @@ function framesToAss(frames, styles = {}, videoWidth, videoHeight) {
   const italicBottom = styles.isItalicBottom ? '1' : '0';
 
   // Tuned baseline heuristics for these fonts/sizes:
-  // These control the vertical position of the text relative to its position anchor.
   const baselineFactorBottom = 0.65; // portion of bottom font height to reserve above its baseline
   const baselineFactorTop = 0.30;     // portion of top font that visually extends above baseline
   
-  // FIX: This factor contributes to the line spacing. Lowering it reduces line height.
-  const extraGapFactor = 0.10; // Reduced from 0.20 to tighten line spacing
+  // Line spacing factor (controls tightness)
+  const extraGapFactor = 0.10; 
 
   // Compute base Y for Line 2 (anchored from the *actual* video bottom)
-  // This uses the newly scaled padding of 100px (at 360p)
-  let Y_pos_Line2 = playResY - scaledPaddingBottom;
+  let Y_pos_Line2 = playResY 
+    - scaledPaddingBottom 
+    + Math.round(scaledFontSizeBottom * (1 - baselineFactorBottom));
+
 
   // If ANY frame contains both line1 and line2, push the bottom line down a bit
   const twoLinePresent = frames.some(f => f.line1 && f.line1.trim() && f.line2 && f.line2.trim());
@@ -130,7 +131,6 @@ function framesToAss(frames, styles = {}, videoWidth, videoHeight) {
   }
 
   // Compute Y for Line1 above Line2 (using all *scaled* metrics)
-  // This now uses the reduced scaledBaseGap and extraGapFactor
   const Y_pos_Line1 = Y_pos_Line2
     - (scaledFontSizeBottom * baselineFactorBottom)
     - (scaledFontSizeTop * baselineFactorTop)
