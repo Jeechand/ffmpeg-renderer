@@ -1,24 +1,44 @@
-// server.js — damped scaling (sqrt) from 360p baseline
+// server.js
 const express = require('express');
 const axios = require('axios');
 const fs = require('fs').promises;
 const fsSync = require('fs');
-const { spawn, execSync } = require('child_process');
+const { execSync, spawn } = require('child_process');
 const { Storage } = require('@google-cloud/storage');
 const path = require('path');
 
 const app = express();
-app.use(express.json({ limit: '300mb' }));
+app.use(express.json({ limit: '200mb' }));
 
 const storage = new Storage();
 const BUCKET = process.env.BUCKET_NAME || '';
 const RENDER_SECRET = process.env.RENDER_SECRET || 'change_me';
-const SYSTEM_FONTS_DIR = process.env.SYSTEM_FONTS_DIR || '/usr/local/share/fonts/custom';
-const TMP_DIR = '/tmp';
 
-// ---------------- Utilities ----------------
+// System fonts dir (where Dockerfile copies fonts)
+const SYSTEM_FONTS_DIR = process.env.SYSTEM_FONTS_DIR || '/usr/local/share/fonts/custom';
+
+// -------------------------
+// Utilities
+// -------------------------
+function runFFmpeg(args) {
+  return new Promise((resolve, reject) => {
+    // keep stdio: 'inherit' so ffmpeg logs appear in Cloud Run logs
+    const ff = spawn('ffmpeg', args, { stdio: 'inherit' });
+    ff.on('close', code => (code === 0 ? resolve() : reject(new Error('ffmpeg exit code ' + code))));
+  });
+}
+
+async function uploadToGCS(localPath, destName) {
+  if (!BUCKET) throw new Error('BUCKET_NAME not set in env');
+  const bucket = storage.bucket(BUCKET);
+  await bucket.upload(localPath, { destination: destName });
+  const file = bucket.file(destName);
+  const expiresDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  const [signedUrl] = await file.getSignedUrl({ version: 'v4', action: 'read', expires: expiresDate });
+  return signedUrl;
+}
+
 function secToAss(tSec) {
-  tSec = isFinite(tSec) ? tSec : 0;
   const h = Math.floor(tSec / 3600);
   const m = Math.floor((tSec % 3600) / 60);
   const s = Math.floor(tSec % 60);
@@ -34,261 +54,282 @@ function cssToAssColor(hex) {
   return `&H00${b}${g}${r}`.toUpperCase();
 }
 
-function escapeAssText(s) {
-  if (!s && s !== 0) return '';
-  let t = String(s).trim();
-  t = t.replace(/\r\n?/g, '\n').replace(/\n/g, '\\N');
-  t = t.replace(/\\/g, '\\\\').replace(/{/g, '\\{').replace(/}/g, '\\}');
-  t = t.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
-  return t;
-}
-
 async function getVideoResolution(inputPath) {
   try {
     const out = execSync(`ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "${inputPath}"`).toString().trim();
     const [w,h] = out.split(',');
-    return { width: parseInt(w,10) || 1920, height: parseInt(h,10) || 1080 };
+    return { width: parseInt(w,10), height: parseInt(h,10) };
   } catch (e) {
-    console.warn('ffprobe failed; using fallback 1920x1080', e.message || e);
+    console.warn('ffprobe failed; using fallback 1920x1080');
     return { width: 1920, height: 1080 };
   }
 }
 
-function runFFmpeg(args) {
-  return new Promise((resolve, reject) => {
-    console.log('Spawning ffmpeg with args:', args.join(' '));
-    const ff = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '', stderr = '';
-    ff.stdout.on('data', d => { stdout += d.toString(); });
-    ff.stderr.on('data', d => { stderr += d.toString(); });
-    ff.on('close', code => {
-      if (code === 0) resolve({ stdout, stderr });
-      else {
-        const err = new Error('ffmpeg exit code ' + code);
-        err.stdout = stdout; err.stderr = stderr;
-        reject(err);
-      }
-    });
-  });
-}
+// -------------------------
+// framesToAss() with conditional extra-down for two-line frames
+// -------------------------
+function framesToAss(frames, styles = {}, videoWidth, videoHeight) {
+  const playResX = videoWidth;
+  const playResY = videoHeight;
+  const refH = 1080;
 
-// ---------------- ASS generation: sqrt damped scaling from 360p --------------
-/*
-  Rule:
-    base sizes you send are treated as pixel sizes at 360p (height=360).
-    scale = sqrt(videoHeight / 360)
-    font = Math.round(base * scale)
-*/
-function framesToAss(frames, styles = {}, videoWidth = 1920, videoHeight = 1080) {
-  const BASELINE = 360;
-  const ratio = (videoHeight || BASELINE) / BASELINE;
-  const scale = Math.sqrt(Math.max(0.01, ratio)); // sqrt damped scale
-
-  // base sizes are expected to be what you want at 360p
-  const rawFontTop = styles.fontSizeTop || 40;
-  const rawFontBottom = styles.fontSizeBottom || 52;
-
-  // apply damped scale; clamp to reasonable min/max
-  const fontSizeTop = Math.max(14, Math.min(380, Math.round(rawFontTop * scale)));
-  const fontSizeBottom = Math.max(16, Math.min(420, Math.round(rawFontBottom * scale)));
-
-  const fontTop = (styles.fontTop || 'Lexend').replace(/,/g,'');
-  const fontBottom = (styles.fontBottom || 'Cormorant Garamond').replace(/,/g,'');
-
+  const fontTop = styles.fontTop || 'Lexend';
+  const fontBottom = styles.fontBottom || 'Cormorant Garamond';
+  const fontSizeTop = styles.fontSizeTop || 40;
+  const fontSizeBottom = styles.fontSizeBottom || 52;
   const colorTop = cssToAssColor(styles.colorTop || '#FFFFFF');
   const colorBottom = cssToAssColor(styles.colorBottom || '#FFD100');
-  const boldTop = (styles.fontWeightTop === '700' || styles.fontWeightTop === 700) ? '1' : '0';
-  const boldBottom = (styles.fontWeightBottom === '700' || styles.fontWeightBottom === 700) ? '1' : '0';
+  const boldTop = (styles.fontWeightTop === '700') ? '1' : '0';
+  const boldBottom = (styles.fontWeightBottom === '700') ? '1' : '0';
   const italicTop = styles.isItalicTop ? '1' : '0';
   const italicBottom = styles.isItalicBottom ? '1' : '0';
+  const paddingBottom = styles.paddingBottom || 200;
 
-  const basePad = styles.paddingBottom != null ? styles.paddingBottom : 120;
-  // pad scales with the same damped scale so vertical placement remains consistent
-  const padScaled = Math.round(basePad * scale);
+  // scale metrics to the actual video height
+  const scale = playResY / refH;
+  const scaledTop = fontSizeTop * scale;
+  const scaledBottom = fontSizeBottom * scale;
+  const baseGap = 18 * scale; // tuned base gap
 
-  const baselineFactorBottom = 0.66;
-  const baselineFactorTop = 0.28;
-  const baseGap = Math.round(18 * scale);
-  const extraGapFactor = 0.22;
+  // Tuned baseline heuristics for these fonts/sizes:
+  const baselineFactorBottom = 0.65; // portion of bottom font height to reserve above its baseline
+  const baselineFactorTop = 0.30;    // portion of top font that visually extends above baseline
+  const extraGapFactor = 0.20;       // additional separation as fraction of bottom font size
 
-  let Y_pos_Line2 = videoHeight - padScaled;
-  const twoLinePresent = Array.isArray(frames) && frames.some(f => f.line1 && f.line1.trim() && f.line2 && f.line2.trim());
-  if (twoLinePresent) Y_pos_Line2 += Math.round(fontSizeBottom * 0.28);
+  // Compute base Y for Line 2 (anchored)
+  let Y_pos_Line2 = playResY - (paddingBottom * scale);
 
+  // If ANY frame contains both line1 and line2, we want to push the bottom line down a bit
+  // to avoid tiny overlaps when top text exists. This only nudges the bottom line, not single-line frames.
+  const twoLinePresent = frames.some(f => f.line1 && f.line1.trim() && f.line2 && f.line2.trim());
+  if (twoLinePresent) {
+    // extra downward nudge proportional to bottom font height (tune multiplier as needed)
+    const extraDownWhenTwoLines = Math.round(scaledBottom * 0.30);
+    Y_pos_Line2 += extraDownWhenTwoLines;
+  }
+
+  // Compute Y for Line1 above Line2 (so top never pushes bottom)
   const Y_pos_Line1 = Y_pos_Line2
-    - (fontSizeBottom * baselineFactorBottom)
-    - (fontSizeTop * baselineFactorTop)
-    - (baseGap + fontSizeBottom * extraGapFactor);
+    - (scaledBottom * baselineFactorBottom)
+    - (scaledTop * baselineFactorTop)
+    - (baseGap + scaledBottom * extraGapFactor);
 
+  // ASS header and styles
+  const shadowColor = '&H80000000';
   const header = `[Script Info]
 ScriptType: v4.00+
-PlayResX: ${videoWidth}
-PlayResY: ${videoHeight}
+PlayResX: ${playResX}
+PlayResY: ${playResY}
 WrapStyle: 0
 Title: Generated by AiVideoCaptioner
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: STYLE_BOTTOM,${fontBottom},${fontSizeBottom},${colorBottom},${colorBottom},&H00000000,&H80000000,${boldBottom},${italicBottom},0,0,100,100,0,0,1,0,2,2,${padScaled},20,0,1
-Style: STYLE_TOP,${fontTop},${fontSizeTop},${colorTop},${colorTop},&H00000000,&H80000000,${boldTop},${italicTop},0,0,100,100,0,0,1,0,2,2,${padScaled},20,0,1
+Style: STYLE_BOTTOM,${fontBottom},${fontSizeBottom},${colorBottom},${colorBottom},&H00000000,${shadowColor},${boldBottom},${italicBottom},0,0,100,100,0,0,1,0,2,2,20,20,0,1
+Style: STYLE_TOP,${fontTop},${fontSizeTop},${colorTop},${colorTop},&H00000000,${shadowColor},${boldTop},${italicTop},0,0,100,100,0,0,1,0,2,2,20,20,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
 
-  const centerX = Math.round(videoWidth / 2);
-  const events = (frames || []).flatMap(f => {
-    const startMs = Number.isFinite(f.start) ? f.start : 0;
-    const endMs = Number.isFinite(f.end) ? f.end : (startMs + 2000);
-    const s = secToAss(startMs / 1000);
-    const e = secToAss(endMs / 1000);
+  const centerX = Math.round(playResX / 2);
+
+  const events = frames.flatMap(f => {
+    const startSec = (f.start || 0) / 1000;
+    const endSec = (f.end || ( (f.start || 0) + 2000 )) / 1000;
+    const assStart = secToAss(startSec);
+    const assEnd = secToAss(endSec);
     const out = [];
-    if (f.line1 && String(f.line1).trim()) {
-      const t1 = escapeAssText(f.line1);
-      out.push(`Dialogue: 0,${s},${e},STYLE_TOP,,0,0,0,,{\\an5\\pos(${centerX},${Math.round(Y_pos_Line1)})}${t1}`);
+
+    if (f.line1 && f.line1.trim()) {
+      const t1 = f.line1.trim().replace(/\n/g, '\\N');
+      out.push(`Dialogue: 0,${assStart},${assEnd},STYLE_TOP,,0,0,0,,{\\an5\\pos(${centerX},${Math.round(Y_pos_Line1)})}${t1}`);
     }
-    if (f.line2 && String(f.line2).trim()) {
-      const t2 = escapeAssText(f.line2);
-      out.push(`Dialogue: 0,${s},${e},STYLE_BOTTOM,,0,0,0,,{\\an5\\pos(${centerX},${Math.round(Y_pos_Line2)})}${t2}`);
+    if (f.line2 && f.line2.trim()) {
+      const t2 = f.line2.trim().replace(/\n/g, '\\N');
+      out.push(`Dialogue: 0,${assStart},${assEnd},STYLE_BOTTOM,,0,0,0,,{\\an5\\pos(${centerX},${Math.round(Y_pos_Line2)})}${t2}`);
     }
     return out;
   }).join('\n');
 
-  console.log(`Scaling: videoH=${videoHeight} ratio=${ratio.toFixed(3)} scale=${scale.toFixed(3)} → top=${fontSizeTop}, bottom=${fontSizeBottom}, pad=${padScaled}`);
   return header + events;
 }
 
-// ---------------- GCS upload ----------------
-async function uploadToGCS(localPath, destName) {
-  if (!BUCKET) throw new Error('BUCKET_NAME not set in env');
-  const bucket = storage.bucket(BUCKET);
-  await bucket.upload(localPath, { destination: destName });
-  const file = bucket.file(destName);
-  const expiresDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-  const [signedUrl] = await file.getSignedUrl({ version: 'v4', action: 'read', expires: expiresDate });
-  return signedUrl;
-}
-
-// ---------------- /render endpoint ----------------
+// -------------------------
+// /render endpoint (with improved logging + style parsing)
+// -------------------------
 app.post('/render', async (req, res) => {
   try {
+    // Auth check
     const headerSecret = req.header('X-Render-Secret');
     const bodySecret = req.body && req.body.render_secret;
     const provided = headerSecret || bodySecret || '';
     if (provided !== RENDER_SECRET) return res.status(401).json({ status: 'error', error: 'unauthorized' });
 
-    console.log('--- /render request ---', 'X-Render-Secret?', !!headerSecret);
+    // Basic request logging for debugging differences between curl and Make
+    console.log('=== Incoming /render request ===');
+    console.log('Headers:', {
+      'X-Render-Secret': !!headerSecret,
+      'content-type': req.header('content-type') || ''
+    });
+    console.log('Body keys:', Object.keys(req.body || {}).join(', '));
+
+    // Extract fields
     let { job_id, video_url, frames, style, callback_url, watermark_url, plan_tier } = req.body || {};
-    if (typeof style === 'string') { try { style = JSON.parse(style); } catch (e) {} }
-    frames = Array.isArray(frames) ? frames : [];
 
-    if (!video_url || !job_id) return res.status(400).json({ status: 'error', error: 'missing video_url or job_id' });
-
-    const shouldAddWatermark = plan_tier === 'free';
-    const inputPath = path.join(TMP_DIR, `in-${job_id}.mp4`);
-    const assPath = path.join(TMP_DIR, `subs-${job_id}.ass`);
-    const debugAssPath = path.join(TMP_DIR, `ass-debug-${job_id}.ass`);
-    const watermarkPath = path.join(TMP_DIR, `watermark-${job_id}.png`);
-    const outPath = path.join(TMP_DIR, `out-${job_id}.mp4`);
-
-    // download video
-    try {
-      console.log('Downloading video:', video_url);
-      const response = await axios({ url: video_url, method: 'GET', responseType: 'stream', timeout: 20000 });
-      const writer = fsSync.createWriteStream(inputPath);
-      await new Promise((resolve, reject) => { response.data.pipe(writer); writer.on('finish', resolve); writer.on('error', reject); });
-      console.log('Saved input to', inputPath);
-    } catch (e) {
-      console.error('Video download failed:', e.message || e);
-      return res.status(500).json({ status: 'error', error: `Video download failed: ${e.message || e}` });
+    // If style was serialized as a JSON string by the caller (common in Make), parse it
+    if (typeof style === 'string') {
+      try {
+        style = JSON.parse(style);
+        console.log('Parsed style from string payload.');
+      } catch (e) {
+        console.warn('style appears to be string but failed JSON.parse; continuing with defaults.');
+      }
     }
 
-    // detect resolution
-    const videoResolution = await getVideoResolution(inputPath);
-    console.log('Detected resolution', videoResolution);
+    // Log the resolved style object and types so we can compare later
+    console.log('Resolved style:', style ? JSON.stringify(style) : '(no style)');
+    console.log('Frames count:', Array.isArray(frames) ? frames.length : 'none');
 
-    // optional font-dir check (helpful)
+    // Quick font dir sanity check (helpful to diagnose missing-font-vs-request-shape)
     try {
-      const fontFiles = fsSync.existsSync(SYSTEM_FONTS_DIR) ? fsSync.readdirSync(SYSTEM_FONTS_DIR) : [];
-      console.log('FontDir:', SYSTEM_FONTS_DIR, 'files:', fontFiles.slice(0,30));
-    } catch (e) { console.warn('Font dir check failed:', e.message || e); }
+      const fontDir = SYSTEM_FONTS_DIR;
+      const fontFiles = fsSync.existsSync(fontDir) ? fsSync.readdirSync(fontDir) : [];
+      console.log('FontDir:', fontDir, 'exists:', !!fontFiles.length, 'files:', fontFiles.slice(0,50));
+      // Log whether requested families exist (using style)
+      const bottomFam = (style && style.fontBottom) || 'Cormorant Garamond';
+      const topFam = (style && style.fontTop) || 'Lexend';
+      const normalize = s => (s || '').toLowerCase().replace(/\s+/g,'');
+      const foundBottom = fontFiles.some(f => normalize(f).includes(normalize(bottomFam)) || normalize(f).includes('cormorant'));
+      const foundTop = fontFiles.some(f => normalize(f).includes(normalize(topFam)) || normalize(f).includes('lexend'));
+      console.log('Requested fontBottom:', bottomFam, 'foundInDir:', foundBottom, 'Requested fontTop:', topFam, 'foundInDir:', foundTop);
+    } catch (e) {
+      console.warn('Font dir check failed:', e.message || e);
+    }
 
-    // watermark download if needed
+    if (!video_url || !frames) return res.status(400).json({ status: 'error', error: 'missing fields - require video_url and frames' });
+
+    const shouldAddWatermark = plan_tier === 'free';
+    const tmpDir = '/tmp';
+    const inputPath = path.join(tmpDir, `in-${job_id}.mp4`);
+    const assPath = path.join(tmpDir, `subs-${job_id}.ass`);
+    const watermarkPath = path.join(tmpDir, `watermark-${job_id}.png`);
+    const outPath = path.join(tmpDir, `out-${job_id}.mp4`);
+
+    // 1) Download input video
+    try {
+      console.log(`Attempting to download video from: ${video_url}`);
+      const writer = (await axios({ url: video_url, method: 'GET', responseType: 'stream' })).data;
+      const outStream = fsSync.createWriteStream(inputPath);
+      await new Promise((resolve, reject) => {
+        writer.pipe(outStream);
+        writer.on('end', resolve);
+        writer.on('error', reject);
+      });
+    } catch (e) {
+      let errorMsg = 'Failed to download video. Please check the URL and access permissions.';
+      if (e.response && e.response.status === 403) {
+        errorMsg = `Video download failed with HTTP 403 Forbidden. Ensure the video URL (${video_url}) is publicly accessible.`;
+      }
+      console.error('Download error:', errorMsg, e.message || e);
+      return res.status(500).json({ status: 'error', error: errorMsg });
+    }
+
+    // 2) Detect video resolution
+    const videoResolution = await getVideoResolution(inputPath);
+    console.log(`Video Resolution Detected: ${videoResolution.width}x${videoResolution.height}`);
+
+    // 3) Download watermark image if needed
     let watermarkInput = null;
     if (shouldAddWatermark && watermark_url) {
       try {
-        const r = await axios({ url: watermark_url, method: 'GET', responseType: 'stream', timeout: 15000 });
-        const s = fsSync.createWriteStream(watermarkPath);
-        await new Promise((resolve, reject) => { r.data.pipe(s); s.on('finish', resolve); s.on('error', reject); });
+        const logoWriter = (await axios({ url: watermark_url, method: 'GET', responseType: 'stream' })).data;
+        const logoOutStream = fsSync.createWriteStream(watermarkPath);
+        await new Promise((resolve, reject) => {
+          logoWriter.pipe(logoOutStream);
+          logoOutStream.on('close', resolve);
+          logoOutStream.on('error', reject);
+        });
         watermarkInput = watermarkPath;
-        console.log('Downloaded watermark to', watermarkPath);
       } catch (e) {
-        console.warn('Failed to download watermark (fallback to text):', e.message || e);
+        console.warn('Failed to download watermark image (Non-fatal, using text watermark):', e.message || e);
       }
     }
 
-    // build ASS + debug copy
+    // 4) Create ASS subtitles (using actual resolution)
     const ass = framesToAss(frames, style || {}, videoResolution.width, videoResolution.height);
     await fs.writeFile(assPath, ass, 'utf8');
-    await fs.writeFile(debugAssPath, ass, 'utf8');
-    console.log('Wrote ASS files:', assPath, debugAssPath);
 
-    // prepare ffmpeg filter (quote paths)
-    const quotedAss = assPath.replace(/'/g, "\\'");
-    const quotedFonts = SYSTEM_FONTS_DIR.replace(/'/g, "\\'");
-    const assFilter = `ass=filename='${quotedAss}':fontsdir='${quotedFonts}'`;
-
-    const WATERMARK_TEXT = 'AiVideoCaptioner';
-    const PADDING = 18;
+    // Watermark & ffmpeg setup
+    const WATERMARK_TEXT = "AiVideoCaptioner";
     const WATERMARK_IMAGE_HEIGHT = 28;
+    const WATERMARK_TEXT_SIZE = 18;
+    const PADDING = 24;
 
-    let ffArgs, filterComplex;
+    // Use system fonts dir we populate in Dockerfile
+    const assFilter = `ass=filename=${assPath}:fontsdir=${SYSTEM_FONTS_DIR}`;
+    let ffArgs;
+    let filterComplex;
 
     if (shouldAddWatermark) {
       if (watermarkInput) {
-        filterComplex = `[0:v]scale=-1:${WATERMARK_IMAGE_HEIGHT}[wm];[1:v][wm]overlay=x=main_w-overlay_w-${PADDING}:y=${PADDING}[v];[v]${assFilter}[outv]`;
-        ffArgs = ['-y','-i', watermarkInput, '-i', inputPath, '-filter_complex', filterComplex, '-map', '[outv]', '-map', '1:a?', '-c:v', 'libx264','-preset','veryfast','-crf','23','-c:a','copy', outPath];
+        // Input order: 0 = watermark image, 1 = video
+        filterComplex = `[0:v]scale=-1:${WATERMARK_IMAGE_HEIGHT}[wm_scaled];[1:v][wm_scaled]overlay=x=main_w-overlay_w-${PADDING}:y=${PADDING}[v_wm];[v_wm]${assFilter}[v]`;
+        ffArgs = ['-y', '-i', watermarkInput, '-i', inputPath, '-filter_complex', filterComplex, '-map', '[v]', '-map', '1:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath];
       } else {
-        const drawtext = `drawtext=text='${WATERMARK_TEXT}':fontsize=16:fontcolor=white@0.7:x=main_w-tw-${PADDING}:y=${PADDING}`;
-        filterComplex = `[0:v]${drawtext}[v_wm];[v_wm]${assFilter}[outv]`;
-        ffArgs = ['-y','-i', inputPath, '-filter_complex', filterComplex, '-map', '[outv]', '-map', '0:a?', '-c:v', 'libx264','-preset','veryfast','-crf','23','-c:a','copy', outPath];
+        // fallback text watermark: use absolute font path for drawtext
+        // Make sure the filename here matches a font you placed into /app/fonts and copied into SYSTEM_FONTS_DIR
+        const lexendFilename = 'Lexend-VariableFont_wght.ttf'; // adjust if your file name differs
+        const lexendPath = path.join(SYSTEM_FONTS_DIR, lexendFilename);
+        const watermarkDrawText = `drawtext=fontfile='${lexendPath}':text='${WATERMARK_TEXT}':fontsize=${WATERMARK_TEXT_SIZE}:fontcolor=white@0.7:x=main_w-tw-${PADDING}:y=${PADDING}[v_wm]`;
+        filterComplex = `[0:v]${watermarkDrawText};[v_wm]${assFilter}[v]`;
+        ffArgs = ['-y', '-i', inputPath, '-filter_complex', filterComplex, '-map', '[v]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath];
       }
     } else {
-      filterComplex = `[0:v]${assFilter}[outv]`;
-      ffArgs = ['-y','-i', inputPath, '-filter_complex', filterComplex, '-map', '[outv]', '-map', '0:a?', '-c:v', 'libx264','-preset','veryfast','-crf','23','-c:a','copy', outPath];
+      filterComplex = `[0:v]${assFilter}[v]`;
+      ffArgs = ['-y', '-i', inputPath, '-filter_complex', filterComplex, '-map', '[v]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'copy', outPath];
     }
 
-    console.log('filterComplex:', filterComplex);
-
-    // run ffmpeg
+    // 5) Run ffmpeg
     try {
-      const { stderr } = await runFFmpeg(ffArgs);
-      console.log('ffmpeg stderr tail:', stderr.slice(-1500));
+      await runFFmpeg(ffArgs);
     } catch (ffErr) {
-      console.error('ffmpeg failed:', ffErr.message || ffErr);
-      console.error('ffmpeg stderr (truncated):', (ffErr.stderr || ffErr.message || '').slice(0,8000));
-      return res.status(500).json({ status: 'error', error: 'ffmpeg failed', details: (ffErr.stderr || ffErr.message || '').slice(0,5000) });
+      console.error('ffmpeg failed:', ffErr);
+      return res.status(500).json({ status: 'error', error: 'ffmpeg failed: ' + (ffErr.message || ffErr) });
     }
 
-    // upload
+    // 6) Upload to GCS
     const destName = `renders/${job_id}-${Date.now()}.mp4`;
     let publicUrl;
-    try { publicUrl = await uploadToGCS(outPath, destName); }
-    catch (uerr) { console.error('upload failed:', uerr); return res.status(500).json({ status:'error', error: 'upload failed: '+(uerr.message||uerr)}); }
-
-    // callback
-    if (callback_url) {
-      try { await axios.post(callback_url, { render_secret: RENDER_SECRET, job_id, status: 'success', video_url: publicUrl }, { timeout:10000 }); }
-      catch (e) { console.warn('Callback failed:', e.message || e); }
+    try {
+      publicUrl = await uploadToGCS(outPath, destName);
+    } catch (uerr) {
+      console.error('upload failed:', uerr);
+      return res.status(500).json({ status: 'error', error: 'upload failed: ' + (uerr.message || uerr) });
     }
 
+    // 7) Optional callback
+    if (callback_url) {
+      try {
+        await axios.post(callback_url, {
+          render_secret: RENDER_SECRET,
+          job_id,
+          status: 'success',
+          video_url: publicUrl
+        }, { timeout: 10000 });
+      } catch (e) {
+        console.warn('Callback failed (non-fatal):', e.message || e);
+      }
+    }
+
+    // 8) Return result
     return res.json({ status: 'success', job_id, video_url: publicUrl });
 
   } catch (err) {
-    console.error('Catch-all error:', err);
-    return res.status(500).json({ status: 'error', error: String(err) });
+    console.error('Server error (catch-all):', err);
+    return res.status(500).json({ status: 'error', error: err.message || String(err) });
   }
 });
 
 const port = process.env.PORT || 8080;
-app.listen(port, () => console.log('Listening on', port));
+app.listen(port, () => console.log('listening on', port));
