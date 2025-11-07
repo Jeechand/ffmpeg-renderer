@@ -18,7 +18,7 @@ const RENDER_SECRET = process.env.RENDER_SECRET || 'change_me';
 const SYSTEM_FONTS_DIR = process.env.SYSTEM_FONTS_DIR || '/usr/local/share/fonts/custom';
 
 // -------------------------
-// Utilities
+// Utilities - (Unchanged)
 // -------------------------
 function runFFmpeg(args) {
   return new Promise((resolve, reject) => {
@@ -66,7 +66,7 @@ async function getVideoResolution(inputPath) {
 }
 
 // -------------------------
-// framesToAss() - Robust logic for all scenarios
+// framesToAss() - Robust logic for all scenarios (FIXED PADDING & LINE HEIGHT)
 // -------------------------
 function framesToAss(frames, styles = {}, videoWidth, videoHeight) {
   const playResX = videoWidth;
@@ -74,11 +74,10 @@ function framesToAss(frames, styles = {}, videoWidth, videoHeight) {
 
   // --- START: Robust Scaling Logic ---
 
-  // 1. Set the Reference Width: Your base fonts (40, 52) are for 360p.
-  //    The standard 16:9 width for 360p is 640px.
+  // 1. Reference Width: Your base fonts (40, 52) are for 360p (640px).
   const refW = 640;
 
-  // 2. Calculate the *correct* scaling factor based on width.
+  // 2. Calculate the correct scaling factor based on width.
   const scale = playResX / refW;
 
   // 3. Define base font properties (these are correct)
@@ -87,25 +86,19 @@ function framesToAss(frames, styles = {}, videoWidth, videoHeight) {
   const baseFontSizeTop = styles.fontSizeTop || 40;
   const baseFontSizeBottom = styles.fontSizeBottom || 52;
   
-  // 4. *** THIS IS THE FIX ***
-  //    Your *other* base values (padding: 200, gap: 18) were tuned for 360p
-  //    using the OLD, *buggy* height-scaling logic (scale = 360/1080 = 0.333).
-  //    We must *correct* those values to find their *true* pixel value at 360p.
+  // 4. *** PADDING & GAP FIX ***
+  //    The target bottom padding for 360p is now explicitly 100px.
+  const correctedBasePaddingBottom = 100;
   
-  const oldBuggyLogicScale = 360 / 1080; // 0.333...
-  
-  // Your "200" padding was actually 200 * 0.333 = ~67 pixels
-  const correctedBasePaddingBottom = (styles.paddingBottom || 200) * oldBuggyLogicScale;
-  
-  // Your "18" gap was actually 18 * 0.333 = 6 pixels
-  const correctedBaseGap = 18 * oldBuggyLogicScale;
+  //    The base gap (vertical space between the two lines) is reduced for tighter spacing.
+  const baseGapRef = 5; 
 
   // 5. Calculate all metrics using the CORRECT scale and CORRECTED base values
   const scaledFontSizeTop = Math.round(baseFontSizeTop * scale);
   const scaledFontSizeBottom = Math.round(baseFontSizeBottom * scale);
   const scaledPaddingBottom = Math.round(correctedBasePaddingBottom * scale);
-  const scaledBaseGap = Math.round(correctedBaseGap * scale);
-
+  const scaledBaseGap = Math.round(baseGapRef * scale);
+  
   // --- END: Robust Scaling Logic ---
 
   // Style properties (colors, weights)
@@ -117,11 +110,15 @@ function framesToAss(frames, styles = {}, videoWidth, videoHeight) {
   const italicBottom = styles.isItalicBottom ? '1' : '0';
 
   // Tuned baseline heuristics for these fonts/sizes:
+  // These control the vertical position of the text relative to its position anchor.
   const baselineFactorBottom = 0.65; // portion of bottom font height to reserve above its baseline
   const baselineFactorTop = 0.30;     // portion of top font that visually extends above baseline
-  const extraGapFactor = 0.20;        // additional separation as fraction of bottom font size
+  
+  // FIX: This factor contributes to the line spacing. Lowering it reduces line height.
+  const extraGapFactor = 0.10; // Reduced from 0.20 to tighten line spacing
 
   // Compute base Y for Line 2 (anchored from the *actual* video bottom)
+  // This uses the newly scaled padding of 100px (at 360p)
   let Y_pos_Line2 = playResY - scaledPaddingBottom;
 
   // If ANY frame contains both line1 and line2, push the bottom line down a bit
@@ -133,7 +130,7 @@ function framesToAss(frames, styles = {}, videoWidth, videoHeight) {
   }
 
   // Compute Y for Line1 above Line2 (using all *scaled* metrics)
-  // This now uses the corrected 'scaledBaseGap'
+  // This now uses the reduced scaledBaseGap and extraGapFactor
   const Y_pos_Line1 = Y_pos_Line2
     - (scaledFontSizeBottom * baselineFactorBottom)
     - (scaledFontSizeTop * baselineFactorTop)
@@ -183,7 +180,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 }
 
 // -------------------------
-// /render endpoint (with improved logging + style parsing)
+// /render endpoint - (Unchanged)
 // -------------------------
 app.post('/render', async (req, res) => {
   try {
