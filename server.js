@@ -75,21 +75,25 @@ function framesToAss(frames, styles = {}, videoWidth, videoHeight) {
   // --- START: Resolution Scaling Fix ---
 
   // Define the *reference width* our base font sizes are tuned for.
-  // We use 1920 (for 1080p landscape) as the 1.0 scale reference.
-  const refW = 1920; 
+  // 360p landscape is typically 640px wide. This is our 1.0 scale reference.
+  const refW = 640; 
 
   // Calculate the scaling factor based *only on the width*.
-  // This ensures text size and wrapping are consistent across all aspect ratios
-  // (landscape, portrait, square).
   const scale = playResX / refW;
 
-  // Base values (defined for the 1920 reference width)
+  // Base values (defined for the 640 reference width)
   const fontTop = styles.fontTop || 'Lexend';
   const fontBottom = styles.fontBottom || 'Cormorant Garamond';
   const baseFontSizeTop = styles.fontSizeTop || 40;
   const baseFontSizeBottom = styles.fontSizeBottom || 52;
   const basePaddingBottom = styles.paddingBottom || 200;
-  const baseGapRef = 18; // Tuned base gap at 1920 width
+  
+  // Base gap *must* also be tuned relative to the 640 width.
+  // If 18 was your gap for 1920, the equivalent for 640 is (18 * 640/1920) = 6
+  // Or, if your padding of 200 "looked right" at 360p, 18 is probably too large.
+  // Let's assume a smaller gap, e.g., 10, is the intended base for 360p.
+  // You may need to tune this `baseGapRef` value.
+  const baseGapRef = 10; // Tuned base gap at 640 width
 
   // Calculate all metrics scaled to the actual video width
   // We use Math.round() to ensure whole pixel values for ASS definitions
